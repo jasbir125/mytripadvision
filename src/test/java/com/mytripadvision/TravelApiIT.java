@@ -8,6 +8,7 @@ import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.mytripadvision.agent.FlightAgent;
 import com.mytripadvision.model.ChatThread;
 import com.mytripadvision.repository.ChatThreadRepository;
 import com.mytripadvision.support.AbstractIT;
@@ -304,8 +305,7 @@ class TravelApiIT extends AbstractIT {
         assertThat(draft.status()).isEqualTo(200);
         assertThat(draft.body().path("status").asString()).isEqualTo("needs_review");
         assertThat(draft.body().path("flight_results").asString()).startsWith("> **Note:** Live flight data could not be fetched");
-        assertThat(notices(draft)).containsExactly(
-                "Flight data (AviationStack) usage limit reached: flight details are estimates.");
+        assertThat(notices(draft)).containsExactly(FlightAgent.NO_LIVE_DATA_LINE);   // the same sentence as the banner
         String threadId = draft.body().path("thread_id").asString();
         JsonNode saved = get("/api/threads/" + threadId + "/messages?user_id=" + userId).body()
                 .path("messages").path(1).path("meta").path("notices");
@@ -317,6 +317,8 @@ class TravelApiIT extends AbstractIT {
         Reply done = review(userId, threadId, "approve", "");
         assertThat(done.body().path("status").asString()).isEqualTo("done");
         assertThat(notices(done)).hasSize(1);
+        // the stubbed model "dropped" the note, so code put the banner back into the final answer
+        assertThat(done.body().path("answer").asString()).isEqualTo(FlightAgent.NO_LIVE_DATA_BANNER + "FINAL-ANSWER");
 
         // once the quota is back, running the flight agent again clears the notice
         WIRE.resetAll();

@@ -3,6 +3,8 @@ package com.mytripadvision.agent;
 import com.mytripadvision.client.LlmClient;
 import com.mytripadvision.workflow.WorkflowState;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -175,8 +177,36 @@ public class FinalAgent {
         String reply = llm.completeWithFinalModel(state.getUsage(), "You are a professional AI travel booking assistant.",
                 state.getPlan().size() == 1 ? focusedPrompt(state) : fullPrompt(state));
         state.addLlmCalls(1);
+        reply = keepFlightBanner(state, reply);
         log.info("[final] done");
         return reply;
+    }
+
+    /** The first words of {@link FlightAgent#NO_LIVE_DATA_BANNER}: present when the model kept the note. */
+    private static final String BANNER_START = "Live flight data could not be fetched";
+    private static final Pattern FLIGHT_HEADING = Pattern.compile("(?im)^#{1,6} .*flight.*$");
+
+    /**
+     * When the flight lookups failed, the user must see the note even if the model dropped or rewrote it.
+     * The prompt asks the model to keep it, but that is followed only sometimes, so code puts it back:
+     * under the flight heading when there is one, else at the top of the answer.
+     */
+    static String keepFlightBanner(WorkflowState state, String answer) {
+        if (!state.getFlightResults().startsWith(FlightAgent.NO_LIVE_DATA_BANNER)) {
+            return answer;
+        }
+        if (answer.contains(BANNER_START)) {
+            log.info("[final] live flight data had failed; the model kept the note");
+            return answer;
+        }
+        Matcher heading = FLIGHT_HEADING.matcher(answer);
+        if (heading.find()) {
+            log.warn("[final] live flight data had failed and the model dropped the note; put back under '{}'", heading.group().strip());
+            return answer.substring(0, heading.end()) + "\n\n" + FlightAgent.NO_LIVE_DATA_BANNER.strip()
+                    + answer.substring(heading.end());
+        }
+        log.warn("[final] live flight data had failed and the model dropped the note; put back at the top");
+        return FlightAgent.NO_LIVE_DATA_BANNER + answer;
     }
 
     private String focusedPrompt(WorkflowState state) {

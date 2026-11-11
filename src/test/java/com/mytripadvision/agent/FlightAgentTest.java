@@ -112,7 +112,9 @@ class FlightAgentTest {
 
         assertThat(result).isEqualTo(FlightAgent.NO_LIVE_DATA_BANNER + "GUIDANCE");
         assertThat(result).startsWith("> **Note:** Live flight data could not be fetched");
-        assertThat(state.noticeLines()).containsExactly("Flight data (AviationStack) unavailable: flight details are estimates.");
+        assertThat(state.noticeLines()).containsExactly(FlightAgent.NO_LIVE_DATA_LINE);   // the banner's own sentence
+        assertThat(FlightAgent.NO_LIVE_DATA_LINE).isEqualTo("Note: Live flight data could not be fetched; please check "
+                + "airline sites for current options. Ticket prices may not be available from the live flight API.");
         assertThat(state.getLlmCalls()).isEqualTo(2);
         ArgumentCaptor<String> prompt = ArgumentCaptor.forClass(String.class);
         verify(llm, times(2)).complete(any(), any(), prompt.capture());
@@ -121,18 +123,32 @@ class FlightAgentTest {
     }
 
     @Test
-    void noAirlinesSuggested_skipsTheLookup_andFallsBackToEstimates() {
+    void noAirlinesSuggested_skipsTheLookup_andAnswersFromKnowledge_withoutBannerOrNotice() {
         when(llm.complete(any(), any(), any())).thenReturn("I do not know", "GUIDANCE");
 
         String result = agent.run(state);
 
-        assertThat(result).startsWith(FlightAgent.NO_LIVE_DATA_BANNER);
-        assertThat(state.noticeLines()).containsExactly("Live flight data not found: flight details are estimates.");
+        // nothing failed, so the user gets no warning; only the model is told there is no live data
+        assertThat(result).isEqualTo("GUIDANCE");
+        assertThat(state.noticeLines()).isEmpty();
         verifyNoInteractions(flights);
     }
 
     @Test
-    void quotaExhausted_isNamedInTheNotice_evenWhenAnotherAirlineJustFailed() {
+    void someAirlinesFailing_isNotAFailure_whenAnotherOneHasLiveData() {
+        when(llm.complete(any(), any(), any())).thenReturn("[\"Thai Airways\", \"Emirates\"]", "GUIDANCE");
+        when(flights.flightsForAirline(eq("Thai Airways"), anyInt())).thenReturn("[{\"flightNumber\":\"TG921\"}]");
+        when(flights.flightsForAirline(eq("Emirates"), anyInt()))
+                .thenThrow(new ExternalServiceException("aviationstack", "usage_limit_reached"));
+
+        String result = agent.run(state);
+
+        assertThat(result).isEqualTo("GUIDANCE");
+        assertThat(state.noticeLines()).isEmpty();
+    }
+
+    @Test
+    void quotaExhausted_isNamedInTheLogReason_evenWhenAnotherAirlineJustFailed() {
         when(llm.complete(any(), any(), any())).thenReturn("[\"Thai Airways\", \"Emirates\"]", "GUIDANCE");
         when(flights.flightsForAirline(eq("Thai Airways"), anyInt()))
                 .thenThrow(new ExternalServiceException("aviationstack", "function_access_restricted"));
@@ -141,7 +157,9 @@ class FlightAgentTest {
 
         agent.run(state);
 
-        assertThat(state.noticeLines()).containsExactly("Flight data (AviationStack) usage limit reached: flight details are estimates.");
+        assertThat(state.noticeLines()).containsExactly(FlightAgent.NO_LIVE_DATA_LINE);
+        assertThat(FlightAgent.failureReason(java.util.List.of("Flight data (AviationStack) unavailable",
+                "Flight data (AviationStack) usage limit reached"))).isEqualTo("Flight data (AviationStack) usage limit reached");
     }
 
     @Test

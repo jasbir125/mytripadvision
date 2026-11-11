@@ -92,9 +92,14 @@ public class FlightAgent {
     static final String NO_LIVE_DATA_NOTICE =
             "Live flight data is unavailable, so use your general knowledge. "
                     + "State clearly that airlines, durations and fares are estimates, not live data.";
-    static final String NO_LIVE_DATA_BANNER =
-            "> **Note:** Live flight data could not be fetched, so the airlines, durations "
-                    + "and fares below are general estimates. Check airline sites for current options.\n\n";
+    /** The message the user sees when the live lookups failed: on the page as a notice, and in the answer as a note. */
+    public static final String NO_LIVE_DATA_TEXT =
+            "Live flight data could not be fetched; please check airline sites for current options. "
+                    + "Ticket prices may not be available from the live flight API.";
+    /** The yellow line above the answer on the page. */
+    public static final String NO_LIVE_DATA_LINE = "Note: " + NO_LIVE_DATA_TEXT;
+    /** The same note inside the flight text, as Markdown. */
+    public static final String NO_LIVE_DATA_BANNER = "> **Note:** " + NO_LIVE_DATA_TEXT + "\n\n";
 
     private static final Pattern JSON_ARRAY = Pattern.compile("\\[.*?]", Pattern.DOTALL);
 
@@ -108,12 +113,18 @@ public class FlightAgent {
             List<String> airlines = pickAirlines(state);
             List<String> failures = Collections.synchronizedList(new ArrayList<>());
             Map<String, String> liveFlights = fetchFlights(airlines, failures);
-            if (liveFlights.isEmpty()) {
-                state.addNotice("flight", noLiveDataNotice(failures));
+            // The banner and the notice are only for a real failure: every lookup threw (quota used up, API down).
+            boolean lookupFailed = liveFlights.isEmpty() && !failures.isEmpty();
+            if (lookupFailed) {
+                log.warn("[flight] live data failed for all {} airline(s) ({}) -> banner and notice added",
+                        airlines.size(), failureReason(failures));
+                state.addNotice("flight", NO_LIVE_DATA_LINE);
+            } else if (liveFlights.isEmpty()) {
+                log.info("[flight] no airline to look up, answering from general knowledge (no failure, so no banner)");
             }
             String guidance = buildGuidance(state, liveFlights);
-            log.info("[flight] done");
-            return liveFlights.isEmpty() ? NO_LIVE_DATA_BANNER + guidance : guidance;
+            log.info("[flight] done, live data for {} airline(s)", liveFlights.size());
+            return lookupFailed ? NO_LIVE_DATA_BANNER + guidance : guidance;
         } catch (RuntimeException ex) {
             log.warn("[flight] failed: {}", ex.getClass().getSimpleName());
             state.addNotice("flight", Outage.reason(ex) + ": the flight agent could not run, so there is no flight guidance.");
@@ -121,18 +132,15 @@ public class FlightAgent {
         }
     }
 
-    /** The one line the user sees when no airline returned live flights; a quota problem is named first. */
-    static String noLiveDataNotice(List<String> failures) {
-        if (failures.isEmpty()) {
-            return "Live flight data not found: flight details are estimates.";
-        }
+    /** Why the lookups failed, for the log; a quota problem is named before an outage. */
+    static String failureReason(List<String> failures) {
         String reason = failures.get(0);
         for (String failure : failures) {
             if (failure.contains("usage limit")) {
                 reason = failure;
             }
         }
-        return reason + ": flight details are estimates.";
+        return reason;
     }
 
     /** Step 1: LLM call that returns airline names. */

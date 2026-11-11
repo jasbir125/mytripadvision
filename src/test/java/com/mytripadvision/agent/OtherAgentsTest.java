@@ -123,6 +123,27 @@ class OtherAgentsTest {
     }
 
     @Test
+    void finalAnswer_putsTheFlightBannerBack_onlyWhenTheLookupsFailed_andTheModelDroppedIt() {
+        WorkflowState failed = state();
+        failed.setFlightResults(FlightAgent.NO_LIVE_DATA_BANNER + "guidance");
+        String banner = FlightAgent.NO_LIVE_DATA_BANNER.strip();
+
+        // under the flight heading when there is one
+        assertThat(FinalAgent.keepFlightBanner(failed, "# Plan\n\n## Flight Information\n- DEL to BKK\n\n## Hotels"))
+                .isEqualTo("# Plan\n\n## Flight Information\n\n" + banner + "\n- DEL to BKK\n\n## Hotels");
+        // at the top when there is no flight heading
+        assertThat(FinalAgent.keepFlightBanner(failed, "Short answer")).isEqualTo(FlightAgent.NO_LIVE_DATA_BANNER + "Short answer");
+        // untouched when the model kept the note
+        String kept = "## Flights\n" + banner + "\nmore";
+        assertThat(FinalAgent.keepFlightBanner(failed, kept)).isSameAs(kept);
+
+        // untouched when the lookups worked (no banner in the flight results)
+        WorkflowState fine = state();
+        fine.setFlightResults("live guidance");
+        assertThat(FinalAgent.keepFlightBanner(fine, "## Flight Information\n- DEL to BKK")).isEqualTo("## Flight Information\n- DEL to BKK");
+    }
+
+    @Test
     void finalAnswer_listsThePlan_andSaysWhenTheItineraryWasNotRequested() {
         when(llm.completeWithFinalModel(any(), any(), any())).thenReturn("ANSWER");
 

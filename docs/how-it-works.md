@@ -117,7 +117,7 @@ Each agent is one Java class with one job. The examples use the Dubai request. W
     1. The AI names up to 3 airlines that likely fly the route.
     2. The app asks AviationStack for each airline's live flights, all three at once. The free plan only allows this one kind of lookup.
     3. The AI turns the live flights into guidance.
-- **If live data fails** (for example the monthly quota is used up), the answer starts with a note that airlines, durations and fares are general estimates.
+- **If live data fails** (for example the monthly quota is used up), the answer starts with a note that airlines, durations and fares are general estimates, and the user gets a one-line notice. The final agent keeps that note in code, because the model drops it now and then.
 - **If you gave no departure city**, the agent writes "Departure city not given" and gives no flight time or fare. It never invents a city.
 - **Example result:** "Departure DAC (Dhaka), arrival DXB (Dubai). Airlines: Emirates, Biman Bangladesh, Qatar Airways. Flight time about 6 hours. Estimated fare USD 500 to 800."
 
