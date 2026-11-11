@@ -5,13 +5,18 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.mytripadvision.client.TavilyClient;
 import com.mytripadvision.model.KnowledgeChunk;
+import com.mytripadvision.model.RagChunk;
 import com.mytripadvision.repository.KnowledgeChunkRepository;
+import com.mytripadvision.repository.KnowledgeMatch;
 import com.mytripadvision.repository.RagChunkRepository;
+import com.mytripadvision.repository.SearchMatch;
 import com.mytripadvision.support.AbstractIT;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Limit;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
 class KnowledgeAndSearchRagIT extends AbstractIT {
@@ -37,12 +42,12 @@ class KnowledgeAndSearchRagIT extends AbstractIT {
     @Test
     void aSectionIsFound_byItsOwnText_andFormattedForThePrompt() {
         KnowledgeChunk section = knowledge.loadSections().stream()
-                .filter(s -> s.source().equals("paris.md")).findFirst().orElseThrow();
-        String query = section.title() + " - " + section.heading() + "\n" + section.content();
+                .filter(s -> s.getSource().equals("paris.md")).findFirst().orElseThrow();
+        String query = section.getTitle() + " - " + section.getHeading() + "\n" + section.getContent();
 
         String result = knowledge.search(query);
 
-        assertThat(result).contains("### " + section.title() + " - " + section.heading() + "\n" + section.content());
+        assertThat(result).contains("### " + query);
     }
 
     @Test
@@ -52,7 +57,7 @@ class KnowledgeAndSearchRagIT extends AbstractIT {
 
     @Test
     void nearestChunks_comeBackBestFirst_withCosineScores() {
-        List<KnowledgeChunkRepository.Scored> top = knowledgeChunks.nearest(embeddings.embedOne("paris metro tickets"), 3);
+        List<KnowledgeMatch> top = knowledgeChunks.nearest(embeddings.embedOne("paris metro tickets"), Limit.of(3));
 
         assertThat(top).hasSize(3);
         assertThat(top).isSortedAccordingTo((a, b) -> Double.compare(b.score(), a.score()));
@@ -82,15 +87,21 @@ class KnowledgeAndSearchRagIT extends AbstractIT {
     @Test
     void chunksOfAnotherRequest_areNeverReturned_andExpiredOnesAreDeleted() {
         float[] vector = embeddings.embedOne("alpha beta");
-        ragChunks.saveAll("req-a", "hotel", List.of(new com.mytripadvision.model.RagChunk("A", "u", "alpha beta")), List.of(vector));
-        ragChunks.saveAll("req-b", "hotel", List.of(new com.mytripadvision.model.RagChunk("B", "u", "alpha beta")), List.of(vector));
+        ragChunks.save(chunk("req-a", "A", vector));
+        ragChunks.save(chunk("req-b", "B", vector));
         jdbc.sql("UPDATE rag_chunks SET created_at = now() - interval '2 days' WHERE request_id = 'req-b'").update();
 
-        assertThat(ragChunks.nearest("req-a", vector, 5)).extracting(RagChunkRepository.Scored::title).containsExactly("A");
-        int deleted = ragChunks.deleteOlderThan(Duration.ofHours(24));
+        assertThat(ragChunks.nearest("req-a", vector, Limit.of(5))).extracting(SearchMatch::title).containsExactly("A");
+        int deleted = ragChunks.deleteCreatedBefore(Instant.now().minus(Duration.ofHours(24)));
 
         assertThat(deleted).isGreaterThanOrEqualTo(1);
-        assertThat(ragChunks.nearest("req-b", vector, 5)).isEmpty();
-        assertThat(ragChunks.nearest("req-a", vector, 5)).hasSize(1);
+        assertThat(ragChunks.nearest("req-b", vector, Limit.of(5))).isEmpty();
+        assertThat(ragChunks.nearest("req-a", vector, Limit.of(5))).hasSize(1);
+    }
+
+    private static RagChunk chunk(String requestId, String title, float[] vector) {
+        RagChunk chunk = new RagChunk(title, "u", "alpha beta");
+        chunk.index(requestId, "hotel", vector);
+        return chunk;
     }
 }

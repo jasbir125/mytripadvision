@@ -3,19 +3,17 @@ package com.mytripadvision.agent;
 import com.mytripadvision.client.FlightClient;
 import com.mytripadvision.client.LlmClient;
 import com.mytripadvision.exception.ExternalServiceException;
+import com.mytripadvision.workflow.Parallel;
 import com.mytripadvision.workflow.WorkflowState;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.slf4j.MDC;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -98,7 +96,6 @@ public class FlightAgent {
                     + "and fares below are general estimates. Check airline sites for current options.\n\n";
 
     private static final Pattern JSON_ARRAY = Pattern.compile("\\[.*?]", Pattern.DOTALL);
-    private static final ExecutorService VIRTUAL_THREADS = Executors.newVirtualThreadPerTaskExecutor();
 
     private final LlmClient llm;
     private final FlightClient flights;
@@ -120,39 +117,30 @@ public class FlightAgent {
 
     /** Step 1: LLM call that returns airline names. */
     private List<String> pickAirlines(WorkflowState state) {
-        Map<String, Object> constraints = state.getTripConstraints();
+        Map<String, Object> trip = state.getTripConstraints();
         String prompt = PICK_AIRLINES_PROMPT
                 .replace("{query}", state.getUserQuery())
-                .replace("{constraints}", constraints.isEmpty() ? "(none)" : constraints.toString())
-                .replace("{route}", routeText(constraints))
+                .replace("{constraints}", Texts.tripDetails(trip))
+                .replace("{route}", routeText(trip))
                 .replace("{count}", String.valueOf(MAX_AIRLINES));
-        String reply = llm.complete(state.getUsage(), SYSTEM, prompt);
-        state.addLlmCalls(1);
-        List<String> airlines = parseAirlines(reply);
+        List<String> airlines = parseAirlines(Agents.ask(llm, state, SYSTEM, prompt));
         log.info("[flight] likely airlines: {}", airlines);
         return airlines;
     }
 
     /** Step 2: live flights per airline, all at once. Airlines that fail are left out. */
     private Map<String, String> fetchFlights(List<String> airlines) {
-        Map<String, String> mdc = MDC.getCopyOfContextMap();   // so log lines of the tasks keep the request id
-        Map<String, CompletableFuture<String>> tasks = new LinkedHashMap<>();
+        Map<String, Supplier<String>> tasks = new LinkedHashMap<>();
         for (String airline : airlines) {
-            tasks.put(airline, CompletableFuture.supplyAsync(() -> {
-                if (mdc != null) {
-                    MDC.setContextMap(mdc);
-                }
-                return fetchOneAirline(airline);
-            }, VIRTUAL_THREADS));
+            tasks.put(airline, () -> fetchOneAirline(airline));
         }
-        Map<String, String> result = new LinkedHashMap<>();
-        tasks.forEach((airline, task) -> {
-            String data = task.join();
+        Map<String, String> found = new LinkedHashMap<>();
+        Parallel.run(tasks).forEach((airline, data) -> {
             if (!data.isEmpty()) {
-                result.put(airline, data);
+                found.put(airline, data);
             }
         });
-        return result;
+        return found;
     }
 
     private String fetchOneAirline(String airline) {
@@ -166,30 +154,30 @@ public class FlightAgent {
 
     /** Step 3: LLM call that turns the flights (or the lack of them) into guidance. */
     private String buildGuidance(WorkflowState state, Map<String, String> liveFlights) {
-        String flightData;
-        String notice;
         if (liveFlights.isEmpty()) {
             log.warn("[flight] no live flight data, answering from general knowledge");
-            flightData = "Not available (live data could not be fetched).";
-            notice = NO_LIVE_DATA_NOTICE;
         } else {
             log.info("[flight] live flights fetched for: {}", liveFlights.keySet());
-            List<String> parts = new ArrayList<>();
-            liveFlights.forEach((airline, data) ->
-                    parts.add(airline + ":\n" + data.substring(0, Math.min(MAX_CHARS_PER_AIRLINE, data.length()))));
-            flightData = String.join("\n\n", parts);
-            notice = LIVE_DATA_NOTICE;
         }
         Map<String, Object> trip = state.getTripConstraints();
         String prompt = GUIDANCE_PROMPT
                 .replace("{query}", state.getUserQuery())
-                .replace("{constraints}", trip.isEmpty() ? "(none)" : trip.toString())
+                .replace("{constraints}", Texts.tripDetails(trip))
                 .replace("{tasks}", SupervisorAgent.hasOrigin(trip) ? TASKS_WITH_ORIGIN : TASKS_WITHOUT_ORIGIN)
-                .replace("{flight_data}", flightData)
-                .replace("{data_notice}", notice);
-        String guidance = llm.complete(state.getUsage(), SYSTEM, prompt);
-        state.addLlmCalls(1);
-        return guidance;
+                .replace("{flight_data}", flightDataText(liveFlights))
+                .replace("{data_notice}", liveFlights.isEmpty() ? NO_LIVE_DATA_NOTICE : LIVE_DATA_NOTICE);
+        return Agents.ask(llm, state, SYSTEM, prompt);
+    }
+
+    /** The live flights as prompt text: one block per airline, each cut to a fixed size. */
+    private static String flightDataText(Map<String, String> liveFlights) {
+        if (liveFlights.isEmpty()) {
+            return "Not available (live data could not be fetched).";
+        }
+        List<String> blocks = new ArrayList<>();
+        liveFlights.forEach((airline, data) ->
+                blocks.add(airline + ":\n" + data.substring(0, Math.min(MAX_CHARS_PER_AIRLINE, data.length()))));
+        return String.join("\n\n", blocks);
     }
 
     /** "between Dhaka and Dubai", or just "to Dubai" when the user did not say where they start. */

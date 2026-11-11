@@ -16,6 +16,7 @@ import com.mytripadvision.workflow.WorkflowState;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -59,12 +60,19 @@ public class HistoryService {
         if (!thread.getUserId().equals(userId)) {
             throw new ThreadNotFoundException();
         }
-        List<String> previous = new ArrayList<>(messages.findTop2ByThreadPkAndRoleOrderByIdDesc(
-                thread.getId(), ChatMessage.USER).stream().map(ChatMessage::getContent).toList());
-        java.util.Collections.reverse(previous);
         return new ThreadContext(threadId, thread.getVersion(), thread.getSummary(),
-                readMap(thread.getTripConstraints()), previous,
+                readMap(thread.getTripConstraints()), lastUserQuestions(thread),
                 messages.countByThreadPkAndRole(thread.getId(), ChatMessage.USER));
+    }
+
+    /** The last two questions the user asked on this thread, oldest first. */
+    private List<String> lastUserQuestions(ChatThread thread) {
+        List<String> questions = new ArrayList<>();
+        for (ChatMessage message : messages.findTop2ByThreadPkAndRoleOrderByIdDesc(thread.getId(), ChatMessage.USER)) {
+            questions.add(message.getContent());
+        }
+        Collections.reverse(questions);
+        return questions;
     }
 
     /** @throws NoPendingReviewException when nothing is paused on this chat */
@@ -79,25 +87,12 @@ public class HistoryService {
     public void saveQuestionTurn(String threadId, String userId, Long expectedVersion, WorkflowState state,
                                  WorkflowOutcome outcome, Map<String, Object> meta) {
         Instant now = clock.instant();
-        String constraints = json.writeValueAsString(state.getTripConstraints());
-        ChatThread thread;
-        if (expectedVersion == null) {
-            thread = ChatThread.start(threadId, userId, state.getQuestion(), now);
-        } else {
-            thread = threads.findByThreadIdAndUserId(threadId, userId).orElseThrow(VersionConflictException::new);
-            if (!expectedVersion.equals(thread.getVersion())) {
-                throw new VersionConflictException();
-            }
-        }
-        if (outcome.status() == WorkflowOutcome.Status.NEEDS_REVIEW) {
-            thread.pauseForReview(json.writeValueAsString(state), state.getSummary(), constraints, now);
-        } else {
-            thread.completeTurn(state.getSummary(), constraints, now);
-        }
-        thread = threads.saveAndFlush(thread);
+        ChatThread thread = expectedVersion == null
+                ? ChatThread.start(threadId, userId, state.getQuestion(), now)
+                : loadForUpdate(threadId, userId, expectedVersion);
+        thread = storeOutcome(thread, state, outcome, now);
         messages.save(ChatMessage.of(thread.getId(), ChatMessage.USER, state.getQuestion(), null, now));
-        messages.save(ChatMessage.of(thread.getId(), ChatMessage.ASSISTANT, outcome.answer(),
-                json.writeValueAsString(meta), now));
+        saveAnswer(thread, outcome, meta, now);
         log.info("Thread saved threadId={} status={}", threadId, thread.getStatus());
     }
 
@@ -106,20 +101,35 @@ public class HistoryService {
     public void saveReviewTurn(String threadId, String userId, Long expectedVersion, WorkflowState state,
                                WorkflowOutcome outcome, Map<String, Object> meta) {
         Instant now = clock.instant();
+        ChatThread thread = loadForUpdate(threadId, userId, expectedVersion);
+        thread = storeOutcome(thread, state, outcome, now);
+        saveAnswer(thread, outcome, meta, now);
+        log.info("Thread saved threadId={} status={}", threadId, thread.getStatus());
+    }
+
+    /** @throws VersionConflictException when the thread is gone or another request changed it in the meantime */
+    private ChatThread loadForUpdate(String threadId, String userId, Long expectedVersion) {
         ChatThread thread = threads.findByThreadIdAndUserId(threadId, userId).orElseThrow(VersionConflictException::new);
         if (!expectedVersion.equals(thread.getVersion())) {
             throw new VersionConflictException();
         }
+        return thread;
+    }
+
+    /** Pauses the thread with the whole workflow state, or marks the turn as finished, and writes it. */
+    private ChatThread storeOutcome(ChatThread thread, WorkflowState state, WorkflowOutcome outcome, Instant now) {
         String constraints = json.writeValueAsString(state.getTripConstraints());
         if (outcome.status() == WorkflowOutcome.Status.NEEDS_REVIEW) {
             thread.pauseForReview(json.writeValueAsString(state), state.getSummary(), constraints, now);
         } else {
             thread.completeTurn(state.getSummary(), constraints, now);
         }
-        thread = threads.saveAndFlush(thread);
+        return threads.saveAndFlush(thread);
+    }
+
+    private void saveAnswer(ChatThread thread, WorkflowOutcome outcome, Map<String, Object> meta, Instant now) {
         messages.save(ChatMessage.of(thread.getId(), ChatMessage.ASSISTANT, outcome.answer(),
                 json.writeValueAsString(meta), now));
-        log.info("Thread saved threadId={} status={}", threadId, thread.getStatus());
     }
 
     /** The user's chats, newest first (at most 50). */

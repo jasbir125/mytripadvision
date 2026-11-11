@@ -1,14 +1,13 @@
 package com.mytripadvision.rag;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.mytripadvision.config.AppProperties;
 import com.mytripadvision.repository.KnowledgeChunkRepository;
-import com.mytripadvision.repository.KnowledgeChunkRepository.Scored;
+import com.mytripadvision.repository.KnowledgeMatch;
 import java.time.Duration;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -53,15 +52,15 @@ class KnowledgeBaseServiceTest {
         var sections = service("classpath:knowledge_base").loadSections();
 
         assertThat(sections).isNotEmpty();
-        assertThat(sections).anyMatch(s -> s.source().equals("paris.md") && s.title().contains("Paris"));
+        assertThat(sections).anyMatch(s -> s.getSource().equals("paris.md") && s.getTitle().contains("Paris"));
     }
 
     @Test
     void search_returnsOnlySectionsAboveTheScoreThreshold() {
         when(embeddings.embedOne(any())).thenReturn(new float[EmbeddingClient.DIMENSIONS]);
-        when(repository.nearest(any(), anyInt())).thenReturn(List.of(
-                new Scored("Paris Guide", "Transport", "Take the metro", 0.80),
-                new Scored("Goa Guide", "Beaches", "Sand", 0.50)));
+        when(repository.nearest(any(), any())).thenReturn(List.of(
+                new KnowledgeMatch("Paris Guide", "Transport", "Take the metro", 0.80),
+                new KnowledgeMatch("Goa Guide", "Beaches", "Sand", 0.50)));
 
         String text = service("classpath:knowledge_base").search("Paris trip");
 
@@ -71,7 +70,7 @@ class KnowledgeBaseServiceTest {
     @Test
     void search_returnsEmptyText_whenNothingIsRelevant() {
         when(embeddings.embedOne(any())).thenReturn(new float[EmbeddingClient.DIMENSIONS]);
-        when(repository.nearest(any(), anyInt())).thenReturn(List.of(new Scored("Goa Guide", "Beaches", "Sand", 0.10)));
+        when(repository.nearest(any(), any())).thenReturn(List.of(new KnowledgeMatch("Goa Guide", "Beaches", "Sand", 0.10)));
 
         assertThat(service("classpath:knowledge_base").search("Oslo")).isEmpty();
     }

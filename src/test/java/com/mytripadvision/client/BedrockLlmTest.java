@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.mytripadvision.config.AppProperties;
+import com.mytripadvision.config.LlmConfig;
 import com.mytripadvision.exception.ExternalServiceException;
 import com.mytripadvision.workflow.Usage;
 import java.time.Duration;
@@ -29,15 +30,18 @@ import software.amazon.awssdk.services.bedrockruntime.model.ThrottlingException;
 import software.amazon.awssdk.services.bedrockruntime.model.TokenUsage;
 import software.amazon.awssdk.services.bedrockruntime.model.ConverseOutput;
 
-/** The Bedrock path of LlmClient, with a fake AWS client: nothing here calls AWS. */
+/** BedrockLlmClient with a fake AWS client: nothing here calls AWS. */
 class BedrockLlmTest {
 
     private final BedrockRuntimeClient aws = mock(BedrockRuntimeClient.class);
 
-    private LlmClient llm(String model, String finalModel, String region) {
-        var config = new AppProperties.Llm("bedrock", model, finalModel, region, "", "", "http://x", "http://x",
+    private static AppProperties.Llm config(String model, String finalModel, String region) {
+        return new AppProperties.Llm("bedrock", model, finalModel, region, "", "", "http://x", "http://x",
                 Duration.ofSeconds(2), Duration.ofSeconds(2));
-        return new LlmClient(new AppProperties(config, null, null, null, null, null), aws);
+    }
+
+    private LlmClient llm(String model, String finalModel, String region) {
+        return new BedrockLlmClient(config(model, finalModel, region), aws);
     }
 
     private LlmClient llm() {
@@ -250,7 +254,10 @@ class BedrockLlmTest {
 
     @Test
     void bedrockStartup_needsNoApiKey() {
-        assertThatCode(() -> llm().checkConfiguration()).doesNotThrowAnyException();
+        var props = new AppProperties(config(null, null, null), null, null, null, null, null);
+
+        assertThatCode(() -> new LlmConfig().llmClient(props, aws)).doesNotThrowAnyException();
+        assertThat(new LlmConfig().llmClient(props, aws)).isInstanceOf(BedrockLlmClient.class);
     }
 
     @Test

@@ -2,50 +2,26 @@ package com.mytripadvision.repository;
 
 import com.mytripadvision.model.KnowledgeChunk;
 import java.util.List;
-import lombok.RequiredArgsConstructor;
-import org.springframework.jdbc.core.simple.JdbcClient;
-import org.springframework.stereotype.Repository;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.data.domain.Limit;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
 
-/** The knowledge-base index; a table without an entity because the vector column is handled in SQL. */
-@Repository
-@RequiredArgsConstructor
-public class KnowledgeChunkRepository {
+/** The knowledge-base index. The vector search is JPQL: {@code cosine_distance} comes from hibernate-vector. */
+public interface KnowledgeChunkRepository extends JpaRepository<KnowledgeChunk, Long> {
 
-    private static final long INDEX_LOCK = 7_301_001L;
+    /** The sections closest to the query vector, best first. */
+    @Query("""
+            select new com.mytripadvision.repository.KnowledgeMatch(
+                c.title, c.heading, c.content, 1 - cosine_distance(c.embedding, :query))
+            from KnowledgeChunk c
+            order by cosine_distance(c.embedding, :query)
+            """)
+    List<KnowledgeMatch> nearest(float[] query, Limit limit);
 
-    public record Scored(String title, String heading, String content, double score) {
-    }
-
-    private final JdbcClient jdbc;
-
-    /** Replaces the whole index. The advisory lock makes two starting replicas take turns instead of duplicating rows. */
-    @Transactional
-    public void replaceAll(List<KnowledgeChunk> chunks, List<float[]> vectors) {
-        jdbc.sql("SELECT pg_advisory_xact_lock(?)").param(INDEX_LOCK).query().singleValue();
-        jdbc.sql("DELETE FROM knowledge_chunks").update();
-        for (int i = 0; i < chunks.size(); i++) {
-            KnowledgeChunk c = chunks.get(i);
-            jdbc.sql("INSERT INTO knowledge_chunks (source, title, heading, content, embedding) "
-                            + "VALUES (?, ?, ?, ?, CAST(? AS vector))")
-                    .params(c.source(), c.title(), c.heading(), c.content(), VectorLiteral.of(vectors.get(i)))
-                    .update();
-        }
-    }
-
-    @Transactional(readOnly = true)
-    public List<Scored> nearest(float[] query, int limit) {
-        String literal = VectorLiteral.of(query);
-        return jdbc.sql("SELECT title, heading, content, 1 - (embedding <=> CAST(? AS vector)) AS score "
-                        + "FROM knowledge_chunks ORDER BY embedding <=> CAST(? AS vector) LIMIT ?")
-                .params(literal, literal, limit)
-                .query((rs, n) -> new Scored(rs.getString("title"), rs.getString("heading"),
-                        rs.getString("content"), rs.getDouble("score")))
-                .list();
-    }
-
-    @Transactional(readOnly = true)
-    public long count() {
-        return jdbc.sql("SELECT count(*) FROM knowledge_chunks").query(Long.class).single();
-    }
+    /**
+     * A PostgreSQL transaction lock, so two replicas that start at the same time rebuild the index one after
+     * the other instead of writing duplicate rows. It is the one statement JPQL cannot express.
+     */
+    @Query(value = "select 1 from pg_advisory_xact_lock(:key)", nativeQuery = true)
+    int lockForRebuild(long key);
 }

@@ -31,8 +31,7 @@ public class WeatherAgent {
     public String run(WorkflowState state) {
         log.info("[weather] started");
         // weather is looked up by city, so first ask the LLM which city the request means
-        String city = llm.complete(state.getUsage(), null, PROMPT.replace("{query}", state.getUserQuery())).strip();
-        state.addLlmCalls(1);
+        String city = Agents.ask(llm, state, null, PROMPT.replace("{query}", state.getUserQuery())).strip();
         log.info("[weather] destination city: '{}'", city);
 
         String result = "Current Weather:\n" + weather.current(city) + "\n\nForecast:\n" + weather.forecast(city);

@@ -2,6 +2,7 @@ package com.mytripadvision.rag;
 
 import com.mytripadvision.config.AppProperties;
 import com.mytripadvision.repository.RagChunkRepository;
+import java.time.Clock;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -15,11 +16,12 @@ public class RagCleanupJob {
 
     private final RagChunkRepository chunks;
     private final AppProperties props;
+    private final Clock clock;
 
     @Scheduled(fixedDelayString = "PT1H", initialDelayString = "PT5M")
     public void cleanup() {
         try {
-            int deleted = chunks.deleteOlderThan(props.rag().retention());
+            int deleted = chunks.deleteCreatedBefore(clock.instant().minus(props.rag().retention()));
             if (deleted > 0) {
                 log.info("[rag] removed {} expired chunks", deleted);
             }

@@ -36,13 +36,11 @@ public class MemoryWriter {
         if (state.getQuestionNumber() % props.workflow().summaryEvery() != 0) {
             return state.getSummary();
         }
-        String current = state.getSummary();
         String prompt = PROMPT
-                .replace("{summary}", current == null || current.isBlank() ? "(none)" : current)
+                .replace("{summary}", Texts.orNone(state.getSummary()))
                 .replace("{answer}", Texts.clip(answer, 800))
                 .replace("{question}", state.getUserQuery());
-        String summary = llm.complete(state.getUsage(), null, prompt).strip();
-        state.addLlmCalls(1);
+        String summary = Agents.ask(llm, state, null, prompt).strip();
         log.info("[memory] summary updated ({} chars)", summary.length());
         return summary;
     }

@@ -127,20 +127,23 @@ public class FinalAgent {
             - If the flight text starts with a "Note" that live data was unavailable, keep that note.
             - One line saying ticket prices may not be available from the live flight API.""";
 
-    /** The heading and format hint for each single-agent answer. */
-    private static String[] focusedFormat(String agent, WorkflowState state) {
+    /** The heading of a single-agent answer and how its body must look. */
+    private record Section(String heading, String format) {
+    }
+
+    private static Section focusedSection(String agent) {
         return switch (agent) {
-            case "weather" -> new String[] {"Weather Information",
-                    "Give the current conditions and the forecast in one or two lines."};
-            case "hotel" -> new String[] {"Hotel Suggestions",
+            case "weather" -> new Section("Weather Information",
+                    "Give the current conditions and the forecast in one or two lines.");
+            case "hotel" -> new Section("Hotel Suggestions",
                     "Use a table with the columns Hotel | Area | Approx. price per night | Why it fits. Use only hotels named in "
-                            + "the information (3-5 of them); write \"not listed\" when a price is missing."};
-            case "flight" -> new String[] {"Flight Information",
-                    "Keep a leading \"Note\" if the information has one. Say that ticket prices may not be available."};
-            case "budget" -> new String[] {"Budget Analysis",
-                    "Keep the budget table and the verdict from the information."};
-            default -> new String[] {"Itinerary",
-                    "Keep every day and the activities, times and places. You may tidy the wording, but do not shorten it."};
+                            + "the information (3-5 of them); write \"not listed\" when a price is missing.");
+            case "flight" -> new Section("Flight Information",
+                    "Keep a leading \"Note\" if the information has one. Say that ticket prices may not be available.");
+            case "budget" -> new Section("Budget Analysis",
+                    "Keep the budget table and the verdict from the information.");
+            default -> new Section("Itinerary",
+                    "Keep every day and the activities, times and places. You may tidy the wording, but do not shorten it.");
         };
     }
 
@@ -178,17 +181,18 @@ public class FinalAgent {
 
     private String focusedPrompt(WorkflowState state) {
         String agent = state.getPlan().get(0);
-        String[] format = focusedFormat(agent, state);
+        Section section = focusedSection(agent);
         return FOCUSED_PROMPT
                 .replace("{agent}", agent)
-                .replace("{heading}", format[0])
-                .replace("{format}", format[1])
+                .replace("{heading}", section.heading())
+                .replace("{format}", section.format())
                 .replace("{info}", focusedInfo(agent, state))
-                .replace("{constraints}", state.getTripConstraints().isEmpty() ? "(none)" : state.getTripConstraints().toString())
+                .replace("{constraints}", Texts.tripDetails(state.getTripConstraints()))
                 .replace("{query}", state.getUserQuery());
     }
 
     private String fullPrompt(WorkflowState state) {
+        Map<String, Object> trip = state.getTripConstraints();
         String itinerary = state.getItinerary().isEmpty() ? "Not requested" : state.getItinerary();
         return PROMPT
                 .replace("{flights}", Texts.clip(state.getFlightResults(), 2000))
@@ -197,10 +201,9 @@ public class FinalAgent {
                 .replace("{budget}", Texts.clip(state.getBudgetAnalysis(), 2000))
                 .replace("{itinerary}", itinerary)
                 .replace("{plan}", String.join(", ", state.getPlan()))
-                .replace("{constraints}", state.getTripConstraints().isEmpty() ? "(none)" : state.getTripConstraints().toString())
-                .replace("{not_given_rule}", notGivenRule(state.getTripConstraints()))
-                .replace("{flight_points}", SupervisorAgent.hasOrigin(state.getTripConstraints())
-                        ? FLIGHT_POINTS_WITH_ORIGIN : FLIGHT_POINTS_WITHOUT_ORIGIN)
+                .replace("{constraints}", Texts.tripDetails(trip))
+                .replace("{not_given_rule}", notGivenRule(trip))
+                .replace("{flight_points}", SupervisorAgent.hasOrigin(trip) ? FLIGHT_POINTS_WITH_ORIGIN : FLIGHT_POINTS_WITHOUT_ORIGIN)
                 .replace("{query}", state.getUserQuery());
     }
 }

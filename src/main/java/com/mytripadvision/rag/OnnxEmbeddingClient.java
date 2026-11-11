@@ -19,6 +19,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
@@ -59,13 +60,10 @@ public class OnnxEmbeddingClient implements EmbeddingClient {
     private float[] embedText(String text) throws OrtException {
         Encoding encoding = tokenizer.encode(text);
         long[] ids = encoding.getIds();
-        long[][] inputIds = {ids};
-        long[][] mask = {encoding.getAttentionMask()};
-        long[][] types = {new long[ids.length]};
-        try (OnnxTensor idTensor = OnnxTensor.createTensor(environment, inputIds);
-             OnnxTensor maskTensor = OnnxTensor.createTensor(environment, mask);
-             OnnxTensor typeTensor = OnnxTensor.createTensor(environment, types)) {
-            Map<String, OnnxTensor> inputs = new java.util.HashMap<>();
+        try (OnnxTensor idTensor = batchOfOne(ids);
+             OnnxTensor maskTensor = batchOfOne(encoding.getAttentionMask());
+             OnnxTensor typeTensor = batchOfOne(new long[ids.length])) {
+            Map<String, OnnxTensor> inputs = new HashMap<>();
             inputs.put("input_ids", idTensor);
             inputs.put("attention_mask", maskTensor);
             if (session.getInputNames().contains("token_type_ids")) {
@@ -73,18 +71,31 @@ public class OnnxEmbeddingClient implements EmbeddingClient {
             }
             try (OrtSession.Result result = session.run(inputs)) {
                 float[][][] hidden = (float[][][]) result.get(0).getValue();
-                float[] cls = hidden[0][0].clone();
-                double norm = 0;
-                for (float v : cls) {
-                    norm += v * v;
-                }
-                norm = Math.sqrt(norm);
-                for (int i = 0; i < cls.length; i++) {
-                    cls[i] = (float) (cls[i] / (norm == 0 ? 1 : norm));
-                }
-                return cls;
+                return normalised(hidden[0][0]);   // the [CLS] vector of the only sequence
             }
         }
+    }
+
+    /** The model takes a batch, so one sequence becomes a 1 x n tensor. */
+    private OnnxTensor batchOfOne(long[] sequence) throws OrtException {
+        return OnnxTensor.createTensor(environment, new long[][] {sequence});
+    }
+
+    /** Scales the vector to length 1 (a zero vector stays as it is). */
+    static float[] normalised(float[] vector) {
+        float[] out = vector.clone();
+        double sumOfSquares = 0;
+        for (float v : out) {
+            sumOfSquares += v * v;
+        }
+        double length = Math.sqrt(sumOfSquares);
+        if (length == 0) {
+            return out;
+        }
+        for (int i = 0; i < out.length; i++) {
+            out[i] = (float) (out[i] / length);
+        }
+        return out;
     }
 
     private void ensureLoaded() {

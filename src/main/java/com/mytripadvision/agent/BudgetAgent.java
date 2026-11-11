@@ -63,13 +63,12 @@ public class BudgetAgent {
     public String run(WorkflowState state) {
         log.info("[budget] started");
         String prompt = PROMPT
-                .replace("{constraints}", state.getTripConstraints().isEmpty() ? "(not specified)" : state.getTripConstraints().toString())
+                .replace("{constraints}", Texts.tripDetails(state.getTripConstraints(), "(not specified)"))
                 .replace("{rules}", rules(state.getTripConstraints()))
                 .replace("{flights}", Texts.clip(state.getFlightResults(), 1200))
                 .replace("{hotels}", Texts.clip(state.getHotelResults(), 1500))
                 .replace("{query}", state.getUserQuery());
-        String reply = llm.complete(state.getUsage(), "You are a careful travel budget analyst.", prompt);
-        state.addLlmCalls(1);
+        String reply = Agents.ask(llm, state, "You are a careful travel budget analyst.", prompt);
         log.info("[budget] done");
         return reply;
     }

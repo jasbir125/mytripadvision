@@ -50,7 +50,7 @@ public class ItineraryAgent {
     public String run(WorkflowState state) {
         log.info("[itinerary] started");
         String prompt = PROMPT
-                .replace("{constraints}", state.getTripConstraints().isEmpty() ? "(none)" : state.getTripConstraints().toString())
+                .replace("{constraints}", Texts.tripDetails(state.getTripConstraints()))
                 .replace("{days_rule}", daysRule(state.getTripConstraints()))
                 .replace("{flights}", Texts.clip(state.getFlightResults(), 2000))
                 .replace("{hotels}", Texts.clip(state.getHotelResults(), 3000))
@@ -58,8 +58,7 @@ public class ItineraryAgent {
                 .replace("{budget}", Texts.clip(state.getBudgetAnalysis(), 1200))
                 .replace("{knowledge}", travelKnowledge(state.getUserQuery()))
                 .replace("{query}", state.getUserQuery());
-        String reply = llm.complete(state.getUsage(), "You are an expert travel planner.", prompt);
-        state.addLlmCalls(1);
+        String reply = Agents.ask(llm, state, "You are an expert travel planner.", prompt);
         log.info("[itinerary] done, {} chars", reply.length());
         return reply;
     }

@@ -53,4 +53,4 @@ Terraform for VPC, RDS PostgreSQL, ECR, Secrets Manager, ECS Fargate behind an A
 
 ## Git
 
-This repo has no commits yet (every file is untracked). Do not commit or push unless asked.
+Remote: `origin` on GitHub, branch `main`. Do not commit or push unless asked.

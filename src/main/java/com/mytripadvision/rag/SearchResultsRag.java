@@ -4,6 +4,7 @@ import com.mytripadvision.client.TavilyClient;
 import com.mytripadvision.config.AppProperties;
 import com.mytripadvision.model.RagChunk;
 import com.mytripadvision.repository.RagChunkRepository;
+import com.mytripadvision.repository.SearchMatch;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -11,6 +12,7 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Limit;
 import org.springframework.stereotype.Service;
 
 /**
@@ -39,14 +41,26 @@ public class SearchResultsRag {
             throw new IllegalArgumentException("no text to index");
         }
         String requestId = UUID.randomUUID().toString().replace("-", "");
-        List<float[]> vectors = embeddings.embed(rows.stream().map(r -> r.title() + ". " + r.content()).toList());
-        chunks.saveAll(requestId, source, rows, vectors);
+        embedAll(rows, requestId, source);
+        chunks.saveAll(rows);
 
-        List<RagChunkRepository.Scored> top = chunks.nearest(requestId, embeddings.embedOne(query), rag.hotelTopK());
+        List<SearchMatch> top = chunks.nearest(requestId, embeddings.embedOne(query), Limit.of(rag.hotelTopK()));
         log.info("[rag] {}: indexed {} chunks from {} docs, kept top {} (best score {})", source, rows.size(),
                 documents.size(), top.size(), top.isEmpty() ? "n/a" : String.format(Locale.ROOT, "%.2f", top.get(0).score()));
         return top.stream().map(t -> "[" + t.title() + "](" + t.url() + ")\n" + t.content())
                 .collect(Collectors.joining("\n\n"));
+    }
+
+    /** Embeds "title. text" of every chunk and ties the chunks to this request. */
+    private void embedAll(List<RagChunk> rows, String requestId, String source) {
+        List<String> texts = new ArrayList<>();
+        for (RagChunk row : rows) {
+            texts.add(row.getTitle() + ". " + row.getContent());
+        }
+        List<float[]> vectors = embeddings.embed(texts);
+        for (int i = 0; i < rows.size(); i++) {
+            rows.get(i).index(requestId, source, vectors.get(i));
+        }
     }
 
     /** Splits text into overlapping chunks after collapsing whitespace. */

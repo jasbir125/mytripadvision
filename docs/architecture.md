@@ -37,7 +37,7 @@ flowchart TB
     CL --> RC["HttpClients (timeouts + one retry)"]
     AG --> RAG["SearchResultsRag, KnowledgeBaseService"]
     RAG --> EMB["EmbeddingClient (OnnxEmbeddingClient)"]
-    RAG --> VR["RagChunkRepository, KnowledgeChunkRepository (JdbcClient)"]
+    RAG --> VR["RagChunkRepository, KnowledgeChunkRepository (Spring Data JPA, hibernate-vector)"]
     HS --> JR["ChatThreadRepository, ChatMessageRepository (JPA)"]
     ERR["ApiExceptionHandler"] -.-> TC
 ```

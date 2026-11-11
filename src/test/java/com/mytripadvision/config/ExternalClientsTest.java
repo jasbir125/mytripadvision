@@ -14,6 +14,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import com.github.tomakehurst.wiremock.stubbing.Scenario;
+import com.mytripadvision.client.ChatApiLlmClient;
 import com.mytripadvision.client.FlightClient;
 import com.mytripadvision.client.LlmClient;
 import com.mytripadvision.client.TavilyClient;
@@ -71,7 +72,7 @@ class ExternalClientsTest {
     }
 
     private LlmClient llm(String key) {
-        return new LlmClient(props(key, Duration.ofSeconds(2)), null);
+        return new ChatApiLlmClient(props(key, Duration.ofSeconds(2)).llm());
     }
 
     @Test
@@ -270,7 +271,7 @@ class ExternalClientsTest {
                 Duration.ofSeconds(1));
         var props = new AppProperties(wrong, null, null, null, null, null);
 
-        assertThatThrownBy(() -> new LlmClient(props, null).checkConfiguration())
+        assertThatThrownBy(() -> new LlmConfig().llmClient(props, null))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("Unknown LLM_PROVIDER 'azure'");
     }
 }

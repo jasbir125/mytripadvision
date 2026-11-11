@@ -28,13 +28,19 @@ public class HotelAgent {
         } catch (RuntimeException ex) {
             // RAG is a bonus: without it the raw search results are used
             log.warn("[hotel] RAG failed ({}); using raw results", ex.getClass().getSimpleName());
-            result = "";
-            for (TavilyClient.Document d : documents) {
-                result += "[" + d.title() + "](" + d.url() + ")\n" + d.content() + "\n\n";
-            }
-            result = result.strip();
+            result = plainText(documents);
         }
         log.info("[hotel] done, {} chars passed to the LLM", result.length());
         return result;
+    }
+
+    /** Every search result as "[title](url)" followed by its text. */
+    private static String plainText(List<TavilyClient.Document> documents) {
+        StringBuilder text = new StringBuilder();
+        for (TavilyClient.Document d : documents) {
+            text.append("[").append(d.title()).append("](").append(d.url()).append(")\n")
+                    .append(d.content()).append("\n\n");
+        }
+        return text.toString().strip();
     }
 }

@@ -33,11 +33,20 @@ public class TravelService {
 
     /** Starts a new question on a new or existing thread. The result is a final answer or a plan to review. */
     public TravelResponse plan(TravelRequest request) {
-        String message = request.message().strip();
-        String threadId = request.threadId() == null || request.threadId().isBlank()
-                ? "user_" + UUID.randomUUID().toString().replace("-", "") : request.threadId();
+        String threadId = request.threadId() == null || request.threadId().isBlank() ? newThreadId() : request.threadId();
         HistoryService.ThreadContext thread = history.openThread(threadId, request.userId());
+        WorkflowState state = newState(request.message().strip(), thread);
 
+        return execute(threadId, state, "new request", () -> workflow.start(state),
+                (outcome, meta) -> history.saveQuestionTurn(threadId, request.userId(), thread.version(), state, outcome, meta));
+    }
+
+    private static String newThreadId() {
+        return "user_" + UUID.randomUUID().toString().replace("-", "");
+    }
+
+    /** A fresh state for one question, with what the thread already knows. */
+    private static WorkflowState newState(String message, HistoryService.ThreadContext thread) {
         WorkflowState state = new WorkflowState();
         state.setQuestion(message);
         state.setUserQuery(message);
@@ -45,9 +54,7 @@ public class TravelService {
         state.setQuestionNumber((int) thread.userMessageCount() + 1);
         state.setSummary(thread.summary());
         state.setTripConstraints(new LinkedHashMap<>(thread.tripConstraints()));
-
-        return execute(threadId, state, "new request", () -> workflow.start(state),
-                (outcome, meta) -> history.saveQuestionTurn(threadId, request.userId(), thread.version(), state, outcome, meta));
+        return state;
     }
 
     /** Continues a plan that waits for the user: action is "approve" or "changes". */
@@ -75,17 +82,23 @@ public class TravelService {
         log.info("[graph] {} | thread={} | plan={} | llm_calls={} | tokens={} | took {} ms", status, threadId,
                 state.getPlan(), state.getLlmCalls(), state.getUsage().total(), (System.nanoTime() - started) / 1_000_000);
 
+        persist(outcome, meta(requestId, status, state, tokenUsage), saver);
+
+        return new TravelResponse(true, status, threadId, outcome.answer(), state.getFlightResults(),
+                state.getHotelResults(), state.getItinerary(), state.getBudgetAnalysis(), state.getTripConstraints(),
+                state.getLlmCalls(), requestId, state.getPlan(), tokenUsage);
+    }
+
+    /** What is stored next to the answer in the chat history (shown by the UI as the message details). */
+    private static Map<String, Object> meta(String requestId, String status, WorkflowState state,
+                                            Map<String, Object> tokenUsage) {
         Map<String, Object> meta = new LinkedHashMap<>();
         meta.put("request_id", requestId);
         meta.put("status", status);
         meta.put("plan", state.getPlan());
         meta.put("llm_calls", state.getLlmCalls());
         meta.put("token_usage", tokenUsage);
-        persist(outcome, meta, saver);
-
-        return new TravelResponse(true, status, threadId, outcome.answer(), state.getFlightResults(),
-                state.getHotelResults(), state.getItinerary(), state.getBudgetAnalysis(), state.getTripConstraints(),
-                state.getLlmCalls(), requestId, state.getPlan(), tokenUsage);
+        return meta;
     }
 
     /**

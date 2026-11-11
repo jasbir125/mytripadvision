@@ -14,13 +14,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.slf4j.MDC;
 import org.springframework.stereotype.Component;
 
 /**
@@ -45,36 +41,24 @@ public class TravelWorkflow {
     private final MemoryWriter memoryWriter;
     private final AppProperties props;
 
-    private final ExecutorService virtualThreads = Executors.newVirtualThreadPerTaskExecutor();
-
     /** Runs a new question from the start. */
     public WorkflowOutcome start(WorkflowState state) {
         String problem = guardrails.check(state.getUserQuery());
         if (!problem.isEmpty()) {
             state.setClarification(problem);
             state.setPlan(new ArrayList<>());
-            return new WorkflowOutcome(WorkflowOutcome.Status.DONE, problem);
+            return done(problem);
         }
 
         SupervisorAgent.Decision decision = supervisor.decide(state);
-        state.setPlan(new ArrayList<>(decision.plan()));
-        state.setClarification(decision.clarification());
-        state.setUserQuery(decision.query());
-        state.setTripConstraints(decision.constraints());
-        state.setReasoning(decision.reasoning());
+        applyDecision(state, decision);
         if (!decision.clarification().isEmpty()) {
             log.info("[supervisor] needs clarification");
-            return new WorkflowOutcome(WorkflowOutcome.Status.DONE, decision.clarification());
+            return done(decision.clarification());
         }
         log.info("[supervisor] plan: {} | reasoning: {}", state.getPlan(), decision.reasoning());
 
-        List<String> dataAgents = new ArrayList<>();
-        for (String agent : ReviewRouting.PARALLEL_AGENTS) {
-            if (state.planned(agent)) {
-                dataAgents.add(agent);
-            }
-        }
-        runDataAgents(state, dataAgents);
+        runDataAgents(state, plannedDataAgents(state));
         return afterDataAgents(state, state.planned("budget"));
     }
 
@@ -84,27 +68,53 @@ public class TravelWorkflow {
             log.info("[review] approved");
             state.setReviewFeedback("");
         } else {
-            String change = feedback == null || feedback.isBlank() ? "Please improve the plan." : feedback.strip();
-            log.info("[review] changes requested");
-            state.setReviewFeedback(change);
-            // the agents that run again read userQuery, so they see the change request
-            state.setUserQuery(state.getUserQuery() + "\nChange request: " + change);
-            state.setRevisionCount(state.getRevisionCount() + 1);
+            requestChanges(state, feedback);
         }
 
         ReviewRouting.Route route = ReviewRouting.afterReview(state.getReviewFeedback(), state.getPlan());
         log.info("[review] next step: {} {}", route.next(), route.dataAgents());
         switch (route.next()) {
-            case FINAL:
+            case FINAL -> {
                 return finish(state);
-            case DATA_AGENTS:
+            }
+            case DATA_AGENTS -> {
                 runDataAgents(state, route.dataAgents());
                 return afterDataAgents(state, state.planned("budget"));
-            case BUDGET:
+            }
+            case BUDGET -> {
                 return afterDataAgents(state, true);
-            default:
+            }
+            default -> {
                 return afterDataAgents(state, false);
+            }
         }
+    }
+
+    private static void applyDecision(WorkflowState state, SupervisorAgent.Decision decision) {
+        state.setPlan(new ArrayList<>(decision.plan()));
+        state.setClarification(decision.clarification());
+        state.setUserQuery(decision.query());
+        state.setTripConstraints(decision.constraints());
+        state.setReasoning(decision.reasoning());
+    }
+
+    /** The agents that run again read userQuery, so the change request is appended to it. */
+    private static void requestChanges(WorkflowState state, String feedback) {
+        String change = feedback == null || feedback.isBlank() ? "Please improve the plan." : feedback.strip();
+        log.info("[review] changes requested");
+        state.setReviewFeedback(change);
+        state.setUserQuery(state.getUserQuery() + "\nChange request: " + change);
+        state.setRevisionCount(state.getRevisionCount() + 1);
+    }
+
+    private static List<String> plannedDataAgents(WorkflowState state) {
+        List<String> agents = new ArrayList<>();
+        for (String agent : ReviewRouting.PARALLEL_AGENTS) {
+            if (state.planned(agent)) {
+                agents.add(agent);
+            }
+        }
+        return agents;
     }
 
     /** Budget (if wanted), then itinerary and review, or straight to the final answer. */
@@ -116,10 +126,7 @@ public class TravelWorkflow {
             return finish(state);
         }
         state.setItinerary(itinerary.run(state));
-
-        boolean needsReview = props.workflow().humanReview()
-                && state.getRevisionCount() < props.workflow().maxRevisions();
-        if (!needsReview) {
+        if (!needsReview(state)) {
             state.setReviewFeedback("");
             return finish(state);
         }
@@ -127,46 +134,31 @@ public class TravelWorkflow {
         return new WorkflowOutcome(WorkflowOutcome.Status.NEEDS_REVIEW, state.getItinerary());
     }
 
+    private boolean needsReview(WorkflowState state) {
+        return props.workflow().humanReview() && state.getRevisionCount() < props.workflow().maxRevisions();
+    }
+
     private WorkflowOutcome finish(WorkflowState state) {
         String answer = finalAgent.run(state);
         state.setSummary(memoryWriter.run(state, answer));
+        return done(answer);
+    }
+
+    private static WorkflowOutcome done(String answer) {
         return new WorkflowOutcome(WorkflowOutcome.Status.DONE, answer);
     }
 
     /**
-     * Runs the flight, hotel and weather agents at the same time, each on its own virtual thread, and waits for
-     * all of them. The agents only read the state; the results are stored here, after the join.
+     * Runs the flight, hotel and weather agents at the same time and waits for all of them.
+     * The agents only read the state; the results are stored here, after the join.
      */
     private void runDataAgents(WorkflowState state, List<String> agents) {
         log.info("[workflow] running in parallel: {}", agents);
-        Map<String, String> mdc = MDC.getCopyOfContextMap();   // new threads start with an empty MDC
-        Map<String, CompletableFuture<String>> tasks = new LinkedHashMap<>();
+        Map<String, Supplier<String>> tasks = new LinkedHashMap<>();
         for (String agent : agents) {
-            tasks.put(agent, CompletableFuture.supplyAsync(() -> {
-                if (mdc != null) {
-                    MDC.setContextMap(mdc);
-                }
-                return runDataAgent(agent, state);
-            }, virtualThreads));
+            tasks.put(agent, () -> runDataAgent(agent, state));
         }
-
-        for (Map.Entry<String, CompletableFuture<String>> task : tasks.entrySet()) {
-            String result;
-            try {
-                result = task.getValue().join();
-            } catch (CompletionException ex) {
-                // hand the original exception on, so the API can answer 503 for a failing provider
-                if (ex.getCause() instanceof RuntimeException cause) {
-                    throw cause;
-                }
-                throw ex;
-            }
-            switch (task.getKey()) {
-                case "flight" -> state.setFlightResults(result);
-                case "hotel" -> state.setHotelResults(result);
-                default -> state.setWeatherResults(result);
-            }
-        }
+        Parallel.run(tasks).forEach((agent, result) -> storeResult(state, agent, result));
         log.info("[gather] all parallel agents finished");
     }
 
@@ -176,5 +168,13 @@ public class TravelWorkflow {
             case "hotel" -> hotel.run(state);
             default -> weather.run(state);
         };
+    }
+
+    private static void storeResult(WorkflowState state, String agent, String result) {
+        switch (agent) {
+            case "flight" -> state.setFlightResults(result);
+            case "hotel" -> state.setHotelResults(result);
+            default -> state.setWeatherResults(result);
+        }
     }
 }

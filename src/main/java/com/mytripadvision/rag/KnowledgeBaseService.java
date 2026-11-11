@@ -3,6 +3,7 @@ package com.mytripadvision.rag;
 import com.mytripadvision.config.AppProperties;
 import com.mytripadvision.model.KnowledgeChunk;
 import com.mytripadvision.repository.KnowledgeChunkRepository;
+import com.mytripadvision.repository.KnowledgeMatch;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -12,12 +13,13 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.ResourcePatternResolver;
+import org.springframework.data.domain.Limit;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Our own travel documents, searchable by meaning. Every .md file in the knowledge location is split into
@@ -28,66 +30,99 @@ import org.springframework.stereotype.Service;
 @Slf4j
 public class KnowledgeBaseService {
 
+    private static final long INDEX_LOCK = 7_301_001L;
+
     private final ResourcePatternResolver resources;
     private final EmbeddingClient embeddings;
     private final KnowledgeChunkRepository repository;
     private final AppProperties props;
 
     /** Rebuilds the index from the files (they are the source of truth). */
+    @Transactional
     public int buildIndex() {
         List<KnowledgeChunk> sections = loadSections();
         if (sections.isEmpty()) {
             log.info("[knowledge] no documents found, nothing to index");
             return 0;
         }
-        // title + heading + text, so the vector knows which city and topic the section belongs to
-        List<String> texts = sections.stream()
-                .map(s -> s.title() + " - " + s.heading() + "\n" + s.content()).toList();
-        repository.replaceAll(sections, embeddings.embed(texts));
+        embedAll(sections);
+        repository.lockForRebuild(INDEX_LOCK);   // replicas starting together rebuild one after the other
+        repository.deleteAllInBatch();
+        repository.saveAll(sections);
         log.info("[knowledge] indexed {} sections from {} files", sections.size(),
-                sections.stream().map(KnowledgeChunk::source).distinct().count());
+                sections.stream().map(KnowledgeChunk::getSource).distinct().count());
         return sections.size();
+    }
+
+    /** Embeds title + heading + text, so the vector knows which city and topic the section belongs to. */
+    private void embedAll(List<KnowledgeChunk> sections) {
+        List<String> texts = new ArrayList<>();
+        for (KnowledgeChunk section : sections) {
+            texts.add(section.getTitle() + " - " + section.getHeading() + "\n" + section.getContent());
+        }
+        List<float[]> vectors = embeddings.embed(texts);
+        for (int i = 0; i < sections.size(); i++) {
+            sections.get(i).setEmbedding(vectors.get(i));
+        }
     }
 
     /** @return the sections most relevant to the query as text, or "" when none scores above the threshold */
     public String search(String query) {
-        AppProperties.Rag rag = props.rag();
-        List<KnowledgeChunkRepository.Scored> rows = repository.nearest(embeddings.embedOne(query), rag.knowledgeTopK());
-        List<KnowledgeChunkRepository.Scored> relevant = rows.stream().filter(r -> r.score() >= rag.minScore()).toList();
-        for (KnowledgeChunkRepository.Scored r : rows) {
-            log.info("[knowledge] {} > {} (score {}) {}", r.title(), r.heading(),
-                    String.format(Locale.ROOT, "%.2f", r.score()),
-                    r.score() >= rag.minScore() ? "used" : "ignored (score too low)");
+        double minScore = props.rag().minScore();
+        Limit topK = Limit.of(props.rag().knowledgeTopK());
+        List<KnowledgeMatch> rows = repository.nearest(embeddings.embedOne(query), topK);
+        List<String> relevant = new ArrayList<>();
+        for (KnowledgeMatch row : rows) {
+            boolean used = row.score() >= minScore;
+            log.info("[knowledge] {} > {} (score {}) {}", row.title(), row.heading(),
+                    String.format(Locale.ROOT, "%.2f", row.score()), used ? "used" : "ignored (score too low)");
+            if (used) {
+                relevant.add("### " + row.title() + " - " + row.heading() + "\n" + row.content());
+            }
         }
         if (relevant.isEmpty()) {
             log.info("[knowledge] no relevant knowledge found for this request");
         }
-        return relevant.stream().map(r -> "### " + r.title() + " - " + r.heading() + "\n" + r.content())
-                .collect(Collectors.joining("\n\n"));
+        return String.join("\n\n", relevant);
     }
 
     List<KnowledgeChunk> loadSections() {
         String location = props.rag().knowledgeLocation().replaceAll("/+$", "");
         List<KnowledgeChunk> all = new ArrayList<>();
         try {
-            Resource[] files = resources.getResources(location + "/**/*.md");
-            Arrays.sort(files, Comparator.comparing(f -> String.valueOf(f.getFilename())));
-            for (Resource file : files) {
-                String text = removeFrontMatter(file.getContentAsString(StandardCharsets.UTF_8));
-                String name = String.valueOf(file.getFilename());
-                String title = name.replaceFirst("\\.md$", "");
-                String stripped = text.strip();
-                if (stripped.startsWith("# ")) {
-                    title = stripped.lines().findFirst().orElse("# " + title).substring(2).strip();
-                }
-                for (Map.Entry<String, String> s : splitIntoSections(text).entrySet()) {
-                    all.add(new KnowledgeChunk(name, title, s.getKey(), s.getValue()));
-                }
+            for (Resource file : markdownFiles(location)) {
+                all.addAll(sectionsOf(file));
             }
         } catch (IOException ex) {
             throw new IllegalStateException("Could not read the knowledge base at " + location, ex);
         }
         return all;
+    }
+
+    /** The .md files under the location, in name order so the index is always built the same way. */
+    private Resource[] markdownFiles(String location) throws IOException {
+        Resource[] files = resources.getResources(location + "/**/*.md");
+        Arrays.sort(files, Comparator.comparing(f -> String.valueOf(f.getFilename())));
+        return files;
+    }
+
+    /** One chunk per "## heading" of the file. */
+    private static List<KnowledgeChunk> sectionsOf(Resource file) throws IOException {
+        String name = String.valueOf(file.getFilename());
+        String text = removeFrontMatter(file.getContentAsString(StandardCharsets.UTF_8));
+        String title = titleOf(name, text);
+        List<KnowledgeChunk> chunks = new ArrayList<>();
+        splitIntoSections(text).forEach((heading, content) -> chunks.add(new KnowledgeChunk(name, title, heading, content)));
+        return chunks;
+    }
+
+    /** The "# Title" line at the top of the file, or else the file name without ".md". */
+    static String titleOf(String fileName, String text) {
+        String stripped = text.strip();
+        if (stripped.startsWith("# ")) {
+            return stripped.lines().findFirst().orElse("").substring(2).strip();
+        }
+        return fileName.replaceFirst("\\.md$", "");
     }
 
     /** Drops the '--- ... ---' metadata block at the top of a file. */
@@ -101,27 +136,27 @@ public class KnowledgeBaseService {
 
     /** Splits a markdown document into sections, one per '## heading' (text before the first one is "Overview"). */
     static Map<String, String> splitIntoSections(String text) {
-        List<String[]> sections = new ArrayList<>();
+        Map<String, String> sections = new LinkedHashMap<>();
         String heading = "Overview";
         StringBuilder body = new StringBuilder();
         for (String line : text.split("\\R", -1)) {
             if (line.startsWith("## ")) {
-                sections.add(new String[] {heading, body.toString()});
+                addSection(sections, heading, body.toString());
                 heading = line.substring(3).strip();
                 body = new StringBuilder();
             } else {
                 body.append(line).append('\n');
             }
         }
-        sections.add(new String[] {heading, body.toString()});
+        addSection(sections, heading, body.toString());
+        return sections;
+    }
 
-        Map<String, String> result = new LinkedHashMap<>();
-        for (String[] s : sections) {
-            String content = s[1].strip();
-            if (!content.isEmpty()) {
-                result.merge(s[0], content, (a, b) -> a + "\n" + b);
-            }
+    /** Empty sections are dropped; two sections with the same heading are joined. */
+    private static void addSection(Map<String, String> sections, String heading, String body) {
+        String content = body.strip();
+        if (!content.isEmpty()) {
+            sections.merge(heading, content, (a, b) -> a + "\n" + b);
         }
-        return result;
     }
 }

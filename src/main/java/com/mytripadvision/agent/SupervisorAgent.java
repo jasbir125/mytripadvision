@@ -83,29 +83,36 @@ public class SupervisorAgent {
 
     public Decision decide(WorkflowState state) {
         Map<String, Object> known = new LinkedHashMap<>(state.getTripConstraints());
-
-        // only the last two earlier questions go into the prompt
-        List<String> earlier = state.getPreviousQuestions();
-        String history = "";
-        for (String question : earlier.subList(Math.max(0, earlier.size() - 2), earlier.size())) {
-            history += "- " + question + "\n";
-        }
-        String summary = state.getSummary();
-
-        String prompt = PROMPT
-                .replace("{summary}", summary == null || summary.isBlank() ? "(none)" : summary)
-                .replace("{constraints}", known.isEmpty() ? "(none)" : known.toString())
-                .replace("{history}", history.isEmpty() ? "(none)" : history.strip())
-                .replace("{message}", state.getUserQuery());
+        String prompt = buildPrompt(state, known);
         try {
-            String reply = llm.complete(state.getUsage(), "You route travel requests. Output JSON only.", prompt);
-            state.addLlmCalls(1);
+            String reply = Agents.ask(llm, state, "You route travel requests. Output JSON only.", prompt);
             return parseDecision(reply, state.getUserQuery(), known);
         } catch (RuntimeException ex) {
             // If routing fails for any reason, run the full pipeline.
             log.warn("[supervisor] routing failed ({}); falling back to ALL agents", ex.getClass().getSimpleName());
             return new Decision(new ArrayList<>(ALL_AGENTS), "", state.getUserQuery(), known, "");
         }
+    }
+
+    private static String buildPrompt(WorkflowState state, Map<String, Object> known) {
+        return PROMPT
+                .replace("{summary}", Texts.orNone(state.getSummary()))
+                .replace("{constraints}", Texts.tripDetails(known))
+                .replace("{history}", recentQuestions(state.getPreviousQuestions()))
+                .replace("{message}", state.getUserQuery());
+    }
+
+    /** Only the last two earlier questions go into the prompt, as a bullet list. */
+    private static String recentQuestions(List<String> earlier) {
+        List<String> lastTwo = earlier.subList(Math.max(0, earlier.size() - 2), earlier.size());
+        if (lastTwo.isEmpty()) {
+            return "(none)";
+        }
+        List<String> bullets = new ArrayList<>();
+        for (String question : lastTwo) {
+            bullets.add("- " + question);
+        }
+        return String.join("\n", bullets);
     }
 
     /**
@@ -115,49 +122,58 @@ public class SupervisorAgent {
      *  "trip_constraints": {"destination": "Rome", "days": null}, "reasoning": "needs stay and travel"}</pre>
      */
     Decision parseDecision(String reply, String message, Map<String, Object> known) {
+        JsonNode decision = json.readTree(jsonObjectIn(reply));
+        String clarification = text(decision, "clarification");
+        String query = text(decision, "query").isEmpty() ? message : text(decision, "query");
+        String reasoning = text(decision, "reasoning");
+        Map<String, Object> constraints = mergeConstraints(known, decision.path("trip_constraints"));
+
+        if (!clarification.isEmpty()) {
+            return new Decision(new ArrayList<>(), clarification, query, constraints, reasoning);
+        }
+        // Business rule: every agent needs a destination. If the model did not ask for one, we ask here,
+        // so the answer never depends on the model following its prompt (it once invented "New York to London").
+        if (!hasDestination(constraints)) {
+            log.info("[supervisor] no destination in this message or earlier in the chat, asking the user");
+            return new Decision(new ArrayList<>(), ASK_DESTINATION, query, constraints, reasoning);
+        }
+        return new Decision(chosenAgents(decision.path("agents")), clarification, query, constraints, reasoning);
+    }
+
+    private static String jsonObjectIn(String reply) {
         Matcher match = JSON_OBJECT.matcher(reply == null ? "" : reply);
         if (!match.find()) {
             throw new IllegalArgumentException("no JSON object in the supervisor reply");
         }
-        JsonNode decision = json.readTree(match.group());
+        return match.group();
+    }
 
-        String clarification = text(decision, "clarification");
-        String query = text(decision, "query").isEmpty() ? message : text(decision, "query");
-
-        // keep the agents in their fixed order and drop unknown names; none listed means all of them
+    /** The agents the model asked for, in their fixed order and without unknown names; none listed means all. */
+    private static List<String> chosenAgents(JsonNode asked) {
         List<String> plan = new ArrayList<>();
-        if (clarification.isEmpty()) {
-            for (String agent : ALL_AGENTS) {
-                for (JsonNode asked : decision.path("agents")) {
-                    if (agent.equals(asked.asString(""))) {
-                        plan.add(agent);
-                    }
+        for (String agent : ALL_AGENTS) {
+            for (JsonNode name : asked) {
+                if (agent.equals(name.asString(""))) {
+                    plan.add(agent);
                 }
             }
-            if (plan.isEmpty()) {
-                plan.addAll(ALL_AGENTS);
-            }
         }
+        return plan.isEmpty() ? new ArrayList<>(ALL_AGENTS) : plan;
+    }
 
-        // new values from this message replace old ones; empty values never erase what we knew
+    /** New values from this message replace old ones; empty values never erase what we knew. */
+    private Map<String, Object> mergeConstraints(Map<String, Object> known, JsonNode fresh) {
         Map<String, Object> constraints = new LinkedHashMap<>(known);
-        if (decision.path("trip_constraints").isObject()) {
-            Map<String, Object> fresh = json.convertValue(decision.path("trip_constraints"),
-                    new TypeReference<LinkedHashMap<String, Object>>() { });
-            fresh.forEach((key, value) -> {
-                if (hasValue(value)) {
-                    constraints.put(key, value);
-                }
-            });
+        if (!fresh.isObject()) {
+            return constraints;
         }
-
-        // Business rule: every agent needs a destination. If the model did not ask for one, we ask here,
-        // so the answer never depends on the model following its prompt (it once invented "New York to London").
-        if (clarification.isEmpty() && !hasDestination(constraints)) {
-            log.info("[supervisor] no destination in this message or earlier in the chat, asking the user");
-            return new Decision(new ArrayList<>(), ASK_DESTINATION, query, constraints, text(decision, "reasoning"));
-        }
-        return new Decision(plan, clarification, query, constraints, text(decision, "reasoning"));
+        Map<String, Object> values = json.convertValue(fresh, new TypeReference<LinkedHashMap<String, Object>>() { });
+        values.forEach((key, value) -> {
+            if (hasValue(value)) {
+                constraints.put(key, value);
+            }
+        });
+        return constraints;
     }
 
     /** True when the trip details hold a real destination (not empty, and not a placeholder like "unknown"). */
