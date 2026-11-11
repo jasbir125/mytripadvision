@@ -112,6 +112,7 @@ class FlightAgentTest {
 
         assertThat(result).isEqualTo(FlightAgent.NO_LIVE_DATA_BANNER + "GUIDANCE");
         assertThat(result).startsWith("> **Note:** Live flight data could not be fetched");
+        assertThat(state.noticeLines()).containsExactly("Flight data (AviationStack) unavailable: flight details are estimates.");
         assertThat(state.getLlmCalls()).isEqualTo(2);
         ArgumentCaptor<String> prompt = ArgumentCaptor.forClass(String.class);
         verify(llm, times(2)).complete(any(), any(), prompt.capture());
@@ -126,7 +127,21 @@ class FlightAgentTest {
         String result = agent.run(state);
 
         assertThat(result).startsWith(FlightAgent.NO_LIVE_DATA_BANNER);
+        assertThat(state.noticeLines()).containsExactly("Live flight data not found: flight details are estimates.");
         verifyNoInteractions(flights);
+    }
+
+    @Test
+    void quotaExhausted_isNamedInTheNotice_evenWhenAnotherAirlineJustFailed() {
+        when(llm.complete(any(), any(), any())).thenReturn("[\"Thai Airways\", \"Emirates\"]", "GUIDANCE");
+        when(flights.flightsForAirline(eq("Thai Airways"), anyInt()))
+                .thenThrow(new ExternalServiceException("aviationstack", "function_access_restricted"));
+        when(flights.flightsForAirline(eq("Emirates"), anyInt()))
+                .thenThrow(new ExternalServiceException("aviationstack", "usage_limit_reached"));
+
+        agent.run(state);
+
+        assertThat(state.noticeLines()).containsExactly("Flight data (AviationStack) usage limit reached: flight details are estimates.");
     }
 
     @Test
@@ -136,6 +151,8 @@ class FlightAgentTest {
         String result = agent.run(state);
 
         assertThat(result).isEqualTo("Flight information unavailable: llm: HTTP 500");
+        assertThat(state.noticeLines()).containsExactly(
+                "AI model unavailable: the flight agent could not run, so there is no flight guidance.");
         assertThat(state.getLlmCalls()).isZero();
     }
 }

@@ -38,7 +38,7 @@ class HistoryServiceIT extends AbstractIT {
     }
 
     private void save(String threadId, String userId, Long version, WorkflowState state, WorkflowOutcome.Status status) {
-        history.saveQuestionTurn(threadId, userId, version, state, new WorkflowOutcome(status, "answer"), Map.of("status", status.wire()));
+        history.saveQuestionTurn(threadId, userId, version, state, new WorkflowOutcome(status, WorkflowOutcome.FINAL, "answer"), Map.of("status", status.wire()));
     }
 
     @Test
@@ -53,7 +53,7 @@ class HistoryServiceIT extends AbstractIT {
         assertThat(paused.state().getTripConstraints()).containsEntry("destination", "Rome");
 
         history.saveReviewTurn(threadId, "u1", paused.version(), paused.state(),
-                new WorkflowOutcome(WorkflowOutcome.Status.DONE, "final"), Map.of("status", "done"));
+                new WorkflowOutcome(WorkflowOutcome.Status.DONE, WorkflowOutcome.FINAL, "final"), Map.of("status", "done"));
 
         assertThatThrownBy(() -> history.loadPaused(threadId, "u1")).isInstanceOf(NoPendingReviewException.class);
         HistoryService.ThreadContext context = history.openThread(threadId, "u1");
@@ -71,10 +71,10 @@ class HistoryServiceIT extends AbstractIT {
         save(threadId, "u1", null, state("Plan Rome"), WorkflowOutcome.Status.NEEDS_REVIEW);
         HistoryService.PausedThread paused = history.loadPaused(threadId, "u1");
         history.saveReviewTurn(threadId, "u1", paused.version(), paused.state(),
-                new WorkflowOutcome(WorkflowOutcome.Status.DONE, "final"), Map.of());
+                new WorkflowOutcome(WorkflowOutcome.Status.DONE, WorkflowOutcome.FINAL, "final"), Map.of());
 
         assertThatThrownBy(() -> history.saveReviewTurn(threadId, "u1", paused.version(), paused.state(),
-                new WorkflowOutcome(WorkflowOutcome.Status.DONE, "again"), Map.of()))
+                new WorkflowOutcome(WorkflowOutcome.Status.DONE, WorkflowOutcome.FINAL, "again"), Map.of()))
                 .isInstanceOf(VersionConflictException.class);
         assertThat(history.messages(threadId, "u1").messages()).hasSize(3);
     }

@@ -1,11 +1,13 @@
 package com.mytripadvision.service;
 
+import com.mytripadvision.config.AppProperties;
 import com.mytripadvision.config.Correlation;
 import com.mytripadvision.dto.ReviewRequest;
 import com.mytripadvision.dto.TravelRequest;
 import com.mytripadvision.dto.TravelResponse;
 import com.mytripadvision.exception.VersionConflictException;
 import com.mytripadvision.workflow.TravelWorkflow;
+import com.mytripadvision.workflow.Usage;
 import com.mytripadvision.workflow.WorkflowOutcome;
 import com.mytripadvision.workflow.WorkflowState;
 import java.util.ArrayList;
@@ -30,6 +32,7 @@ public class TravelService {
 
     private final TravelWorkflow workflow;
     private final HistoryService history;
+    private final AppProperties props;
 
     /** Starts a new question on a new or existing thread. The result is a final answer or a plan to review. */
     public TravelResponse plan(TravelRequest request) {
@@ -46,8 +49,9 @@ public class TravelService {
     }
 
     /** A fresh state for one question, with what the thread already knows. */
-    private static WorkflowState newState(String message, HistoryService.ThreadContext thread) {
+    private WorkflowState newState(String message, HistoryService.ThreadContext thread) {
         WorkflowState state = new WorkflowState();
+        state.setUsage(new Usage(props.llm().prices()));
         state.setQuestion(message);
         state.setUserQuery(message);
         state.setPreviousQuestions(new ArrayList<>(thread.previousQuestions()));
@@ -62,6 +66,7 @@ public class TravelService {
         HistoryService.PausedThread paused = history.loadPaused(request.threadId(), request.userId());
         WorkflowState state = paused.state();
         state.setLlmCalls(0);
+        state.setUsage(new Usage(props.llm().prices()));   // tokens and cost of this request only
 
         return execute(request.threadId(), state, "review answer",
                 () -> workflow.resume(state, request.action(), request.feedback()),
@@ -79,23 +84,26 @@ public class TravelService {
         WorkflowOutcome outcome = run.get();
         String status = outcome.status().wire();
         Map<String, Object> tokenUsage = state.getUsage().asMap();
-        log.info("[graph] {} | thread={} | plan={} | llm_calls={} | tokens={} | took {} ms", status, threadId,
-                state.getPlan(), state.getLlmCalls(), state.getUsage().total(), (System.nanoTime() - started) / 1_000_000);
+        log.info("[graph] {} by {} | thread={} | plan={} | llm_calls={} | tokens={} | took {} ms", status,
+                outcome.agent(), threadId, state.getPlan(), state.getLlmCalls(), state.getUsage().total(),
+                (System.nanoTime() - started) / 1_000_000);
 
-        persist(outcome, meta(requestId, status, state, tokenUsage), saver);
+        persist(outcome, meta(requestId, outcome, state, tokenUsage), saver);
 
-        return new TravelResponse(true, status, threadId, outcome.answer(), state.getFlightResults(),
+        return new TravelResponse(true, status, outcome.agent(), threadId, outcome.answer(), state.getFlightResults(),
                 state.getHotelResults(), state.getItinerary(), state.getBudgetAnalysis(), state.getTripConstraints(),
-                state.getLlmCalls(), requestId, state.getPlan(), tokenUsage);
+                state.getLlmCalls(), requestId, state.getPlan(), state.noticeLines(), tokenUsage);
     }
 
     /** What is stored next to the answer in the chat history (shown by the UI as the message details). */
-    private static Map<String, Object> meta(String requestId, String status, WorkflowState state,
+    private static Map<String, Object> meta(String requestId, WorkflowOutcome outcome, WorkflowState state,
                                             Map<String, Object> tokenUsage) {
         Map<String, Object> meta = new LinkedHashMap<>();
         meta.put("request_id", requestId);
-        meta.put("status", status);
+        meta.put("status", outcome.status().wire());
+        meta.put("agent", outcome.agent());
         meta.put("plan", state.getPlan());
+        meta.put("notices", state.noticeLines());
         meta.put("llm_calls", state.getLlmCalls());
         meta.put("token_usage", tokenUsage);
         return meta;

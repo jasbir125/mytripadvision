@@ -1,7 +1,6 @@
 package com.mytripadvision.agent;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -53,12 +52,27 @@ class OtherAgentsTest {
     }
 
     @Test
-    void weather_failureOfTheApi_propagates() {
+    void weather_failureOfTheApi_givesAOneLineNotice_insteadOfFailingThePlan() {
         WeatherClient weather = mock(WeatherClient.class);
         when(llm.complete(any(), any(), anyString())).thenReturn("Lisbon");
         when(weather.current(anyString())).thenThrow(new ExternalServiceException("openweather", "HTTP 502"));
 
-        assertThatThrownBy(() -> new WeatherAgent(llm, weather).run(state())).isInstanceOf(ExternalServiceException.class);
+        WorkflowState state = state();
+
+        assertThat(new WeatherAgent(llm, weather).run(state)).isEqualTo(WeatherAgent.NO_DATA_TEXT);
+        assertThat(state.noticeLines()).containsExactly(
+                "Weather service (OpenWeather) unavailable: there are no weather details in this plan.");
+    }
+
+    @Test
+    void hotel_searchServiceDown_givesAOneLineNotice_andNoHotels() {
+        TavilyClient tavily = mock(TavilyClient.class);
+        when(tavily.search(anyString())).thenThrow(new ExternalServiceException("tavily", "HTTP 432"));
+        WorkflowState state = state();
+
+        assertThat(new HotelAgent(tavily, mock(SearchResultsRag.class)).run(state)).isEqualTo(HotelAgent.NO_SEARCH_TEXT);
+        assertThat(state.noticeLines()).containsExactly(
+                "Hotel search (Tavily) usage limit reached: there are no hotel suggestions in this plan.");
     }
 
     @Test

@@ -17,7 +17,7 @@ Read first: `docs/how-it-works.md` (plain-English design), `docs/architecture.md
 - Run: IntelliJ `MyTripAdvisionApplication` (debug works), or `./mvnw spring-boot:run`. First start downloads a ~130 MB embedding model.
 - Tests: `./mvnw -B verify` (needs Docker: Testcontainers with `pgvector/pgvector:pg17`). About 130 unit and 30 integration tests, all must pass; coverage gate 70%.
 - All settings live in `src/main/resources/application.yml`. API keys go in `config/local-secrets.yml` (git-ignored, excluded from the Docker image); template: `config/local-secrets.example.yml`.
-- AI provider: `mytripadvision.llm.provider` = `openai`, `groq` or `bedrock`. Leave `model` and `final-model` empty to get each provider's default. The final answer uses a stronger model (`LLM_FINAL_MODEL`).
+- AI provider: `mytripadvision.llm.provider` = `openai`, `groq` or `bedrock`. **All model ids and prices live in `application.yml`** (`mytripadvision.llm.providers` and `.prices`), none in Java. Leave `model` and `final-model` empty to get the provider's models from there. The final answer uses a stronger model (`LLM_FINAL_MODEL`).
 
 ## How a request flows (agents are in `agent/`, the chain is `workflow/TravelWorkflow`)
 
@@ -38,7 +38,7 @@ RAG: hotel search results (per request, Tavily -> pgvector, top 6) and the Markd
 - **Do not run `./mvnw clean verify` in the repo root while IntelliJ is open.** Both write `target/`, and a jar was built without `BudgetAgent.class`. Build in a scratch copy instead (copy `pom.xml`, `mvnw`, `.mvn`, `src` to a temp folder). Use `--server.port=8002` for a throwaway instance so the user's server on 8001 is untouched.
 - IntelliJ serves the page from `target/classes`: after UI edits the user must rebuild and hard-refresh. Java changes need a restart.
 - **PDF export:** html2pdf prints a copy of the element, so it must not be hidden or moved off-screen (that gave a blank PDF). `downloadPDF` builds a fresh `.pdf-sheet` in the light theme. Check a PDF by looking at it (`qlmanage -t`), not just that a download happened.
-- AviationStack free plan allows only `/flights`, and has a monthly quota (`usage_limit_reached`, HTTP 429). The flight agent then falls back to estimates with a banner. Do not retry a quota error.
+- AviationStack free plan allows only `/flights`, and has a monthly quota (`usage_limit_reached`, HTTP 429). The flight agent then falls back to estimates with a banner and a one-line notice (`WorkflowState.notices`, wording in `agent/Outage`); hotel and weather outages do the same. Only an AI-model failure fails the request (503 with a one-line reason). Do not retry a quota error.
 - AI and web text is shown through DOMPurify; keep it that way.
 
 ## How to verify work

@@ -30,9 +30,28 @@ public final class ExternalApiStubs {
     }
 
     public static void llmFails(WireMockServer wire, String marker) {
+        llmFails(wire, marker, 500);
+    }
+
+    public static void llmFails(WireMockServer wire, String marker, int httpStatus) {
         wire.stubFor(post(urlEqualTo("/llm/chat/completions")).atPriority(1)
                 .withRequestBody(containing(marker))
-                .willReturn(aResponse().withStatus(500).withBody("{\"error\":\"secret upstream detail\"}")));
+                .willReturn(aResponse().withStatus(httpStatus).withBody("{\"error\":\"secret upstream detail\"}")));
+    }
+
+    /** AviationStack answers every airline with its monthly-quota error (HTTP 429). */
+    public static void flightQuotaExhausted(WireMockServer wire) {
+        wire.stubFor(get(urlPathEqualTo("/aviation/flights")).atPriority(1)
+                .willReturn(aResponse().withStatus(429).withHeader("Content-Type", "application/json")
+                        .withBody("{\"error\": {\"code\": \"usage_limit_reached\", \"type\": \"usage_limit_reached\"}}")));
+    }
+
+    public static void hotelSearchDown(WireMockServer wire) {
+        wire.stubFor(post(urlEqualTo("/tavily/search")).atPriority(1).willReturn(aResponse().withStatus(500)));
+    }
+
+    public static void weatherDown(WireMockServer wire) {
+        wire.stubFor(get(urlPathEqualTo("/weather/weather")).atPriority(1).willReturn(aResponse().withStatus(503)));
     }
 
     public static void defaults(WireMockServer wire) {

@@ -30,8 +30,9 @@ class TravelControllerTest {
     @MockitoBean TravelService travel;
 
     private static TravelResponse response(String status) {
-        return new TravelResponse(true, status, "user_1", "the answer", "flights", "hotels", "itinerary", "budget",
+        return new TravelResponse(true, status, "final", "user_1", "the answer", "flights", "hotels", "itinerary", "budget",
                 Map.of("destination", "Tokyo"), 4, "ab12cd34", List.of("flight", "itinerary"),
+                List.of("Flight data (AviationStack) usage limit reached: flight details are estimates."),
                 Map.of("prompt", 10, "completion", 5, "total", 15, "cost_usd", 0.000005));
     }
 
@@ -44,6 +45,7 @@ class TravelControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.status").value("needs_review"))
+                .andExpect(jsonPath("$.agent").value("final"))
                 .andExpect(jsonPath("$.thread_id").value("user_1"))
                 .andExpect(jsonPath("$.answer").value("the answer"))
                 .andExpect(jsonPath("$.flight_results").value("flights"))
@@ -53,6 +55,7 @@ class TravelControllerTest {
                 .andExpect(jsonPath("$.llm_calls").value(4))
                 .andExpect(jsonPath("$.request_id").value("ab12cd34"))
                 .andExpect(jsonPath("$.plan[0]").value("flight"))
+                .andExpect(jsonPath("$.notices[0]").value("Flight data (AviationStack) usage limit reached: flight details are estimates."))
                 .andExpect(jsonPath("$.token_usage.total").value(15))
                 .andExpect(jsonPath("$.token_usage.cost_usd").value(0.000005));
     }
@@ -97,16 +100,24 @@ class TravelControllerTest {
     }
 
     @Test
-    void plan_dependencyFailure_returns503_withoutRemoteDetails() throws Exception {
+    void plan_dependencyFailure_returns503_namingTheService_withoutRemoteDetails() throws Exception {
         when(travel.plan(any())).thenThrow(new ExternalServiceException("tavily", "HTTP 502 secret-detail"));
 
         mvc.perform(post("/api/travel").contentType(MediaType.APPLICATION_JSON).content("{\"message\": \"hi\"}"))
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.success").value(false))
-                .andExpect(jsonPath("$.error").value(
-                        "A service this request depends on is unavailable. Please try again in a moment."))
+                .andExpect(jsonPath("$.error").value("Hotel search (Tavily) unavailable. Please try again later."))
                 .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("secret-detail"))));
+    }
+
+    @Test
+    void plan_llmQuotaExhausted_returns503_sayingTheUsageLimitIsReached() throws Exception {
+        when(travel.plan(any())).thenThrow(new ExternalServiceException("llm", "HTTP 429"));
+
+        mvc.perform(post("/api/travel").contentType(MediaType.APPLICATION_JSON).content("{\"message\": \"hi\"}"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.error").value("AI model usage limit reached. Please try again later."));
     }
 
     @Test

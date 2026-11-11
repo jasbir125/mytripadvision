@@ -1,29 +1,41 @@
 package com.mytripadvision.workflow;
 
+import com.mytripadvision.config.AppProperties;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
-/** Token counter for ONE request. The workflow creates it and every LLM call adds to it. */
+/**
+ * Token counter for ONE request. The workflow creates it and every LLM call adds to it.
+ * The prices come from mytripadvision.llm.prices in application.yml; a model that is not listed counts as free.
+ */
 public class Usage {
 
-    // USD per 1 million tokens {input, output}. These are estimates: check your provider's price list and
-    // update them when prices change. A model that is not listed here is counted as free.
-    private static final Map<String, double[]> PRICES = Map.of(
-            "gpt-4o-mini", new double[] {0.15, 0.60},
-            "gpt-4o", new double[] {2.50, 10.00},
-            "gpt-4.1", new double[] {2.00, 8.00},
-            "gpt-4.1-mini", new double[] {0.40, 1.60},
-            "amazon.nova-lite-v1:0", new double[] {0.06, 0.24},
-            "amazon.nova-pro-v1:0", new double[] {0.80, 3.20});
+    /** USD per 1 million tokens {input, output}, by model id. */
+    private final Map<String, double[]> prices = new HashMap<>();
 
     private long promptTokens;
     private long completionTokens;
     private double cost;
 
+    /** Without a price list every model counts as free. */
+    public Usage() {
+    }
+
+    public Usage(List<AppProperties.Llm.Price> priceList) {
+        if (priceList == null) {
+            return;
+        }
+        for (AppProperties.Llm.Price price : priceList) {
+            prices.put(price.model(), new double[] {price.input(), price.output()});
+        }
+    }
+
     /** Bedrock inference profile ids start with "us." (us.amazon.nova-lite-v1:0); the price is the same without it. */
-    private static double[] priceFor(String model) {
+    private double[] priceFor(String model) {
         String id = model != null && model.startsWith("us.") ? model.substring(3) : model;
-        return PRICES.get(id);
+        return prices.get(id);
     }
 
     /** Agents run in parallel, so this is synchronized. */

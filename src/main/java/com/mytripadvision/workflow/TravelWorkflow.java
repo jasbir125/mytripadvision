@@ -47,14 +47,14 @@ public class TravelWorkflow {
         if (!problem.isEmpty()) {
             state.setClarification(problem);
             state.setPlan(new ArrayList<>());
-            return done(problem);
+            return done(WorkflowOutcome.GUARDRAILS, problem);
         }
 
         SupervisorAgent.Decision decision = supervisor.decide(state);
         applyDecision(state, decision);
         if (!decision.clarification().isEmpty()) {
             log.info("[supervisor] needs clarification");
-            return done(decision.clarification());
+            return done(WorkflowOutcome.SUPERVISOR, decision.clarification());
         }
         log.info("[supervisor] plan: {} | reasoning: {}", state.getPlan(), decision.reasoning());
 
@@ -131,7 +131,7 @@ public class TravelWorkflow {
             return finish(state);
         }
         log.info("[review] waiting for the user: approve or request changes");
-        return new WorkflowOutcome(WorkflowOutcome.Status.NEEDS_REVIEW, state.getItinerary());
+        return new WorkflowOutcome(WorkflowOutcome.Status.NEEDS_REVIEW, WorkflowOutcome.ITINERARY, state.getItinerary());
     }
 
     private boolean needsReview(WorkflowState state) {
@@ -141,11 +141,12 @@ public class TravelWorkflow {
     private WorkflowOutcome finish(WorkflowState state) {
         String answer = finalAgent.run(state);
         state.setSummary(memoryWriter.run(state, answer));
-        return done(answer);
+        return done(WorkflowOutcome.FINAL, answer);
     }
 
-    private static WorkflowOutcome done(String answer) {
-        return new WorkflowOutcome(WorkflowOutcome.Status.DONE, answer);
+    /** A finished run; {@code agent} is the agent whose text is the answer. */
+    private static WorkflowOutcome done(String agent, String answer) {
+        return new WorkflowOutcome(WorkflowOutcome.Status.DONE, agent, answer);
     }
 
     /**
@@ -156,6 +157,7 @@ public class TravelWorkflow {
         log.info("[workflow] running in parallel: {}", agents);
         Map<String, Supplier<String>> tasks = new LinkedHashMap<>();
         for (String agent : agents) {
+            state.clearNotice(agent);   // an agent that runs again gets a fresh chance
             tasks.put(agent, () -> runDataAgent(agent, state));
         }
         Parallel.run(tasks).forEach((agent, result) -> storeResult(state, agent, result));

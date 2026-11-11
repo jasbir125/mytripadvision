@@ -43,14 +43,33 @@ mytripadvision:
   llm:
     # Which AI service answers: openai, groq or bedrock.
     provider: ${LLM_PROVIDER:openai}
-    # Models. Leave both EMPTY to get the default for the chosen provider (so switching provider is one line):
-    #                 model (agents)              final-model (final answer)
-    #   openai        gpt-4o-mini                 gpt-4o
-    #   groq          openai/gpt-oss-120b         openai/gpt-oss-120b
-    #   bedrock       us.amazon.nova-lite-v1:0    us.amazon.nova-pro-v1:0     (no API key: uses AWS credentials)
-    # To choose your own, write the model id here, e.g.  model: gpt-4.1-mini
+    # Overrides for one run. Leave both EMPTY to use the chosen provider's models from `providers` below
+    # (so switching provider is one line). E.g.  LLM_MODEL=gpt-4.1-mini
     model: ${LLM_MODEL:}
     final-model: ${LLM_FINAL_MODEL:}
+    # ALL AI MODELS THE APP USES, in one place. For each provider: `model` runs the agents and
+    # `final-model` writes the final answer (a stronger model; leave it empty to reuse `model`).
+    # Bedrock takes a model id or a cross-region inference profile id (the "us." prefix); no API key, it uses AWS credentials.
+    providers:
+      openai:
+        model: gpt-4o-mini
+        final-model: gpt-4o
+      groq:
+        model: openai/gpt-oss-120b
+        final-model: openai/gpt-oss-120b
+      bedrock:
+        model: "us.amazon.nova-lite-v1:0"
+        final-model: "us.amazon.nova-pro-v1:0"
+    # What the models cost, in USD per 1 million tokens, for the cost shown under every answer. These are
+    # estimates: check your provider's price list. A model that is not listed counts as free. Bedrock ids are
+    # matched with or without the "us." prefix.
+    prices:
+      - { model: gpt-4o-mini, input: 0.15, output: 0.60 }
+      - { model: gpt-4o, input: 2.50, output: 10.00 }
+      - { model: gpt-4.1, input: 2.00, output: 8.00 }
+      - { model: gpt-4.1-mini, input: 0.40, output: 1.60 }
+      - { model: "amazon.nova-lite-v1:0", input: 0.06, output: 0.24 }
+      - { model: "amazon.nova-pro-v1:0", input: 0.80, output: 3.20 }
     region: ${AWS_REGION:us-east-1}          # only for provider=bedrock
     openai-api-key: ${OPENAI_API_KEY:}       # real keys: config/local-secrets.yml
     groq-api-key: ${GROQ_API_KEY:}

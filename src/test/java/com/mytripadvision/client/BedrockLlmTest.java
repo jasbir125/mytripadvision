@@ -14,6 +14,7 @@ import com.mytripadvision.config.LlmConfig;
 import com.mytripadvision.exception.ExternalServiceException;
 import com.mytripadvision.workflow.Usage;
 import java.time.Duration;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import software.amazon.awssdk.awscore.exception.AwsErrorDetails;
@@ -27,6 +28,7 @@ import software.amazon.awssdk.services.bedrockruntime.model.ConverseResponse;
 import software.amazon.awssdk.services.bedrockruntime.model.Message;
 import software.amazon.awssdk.services.bedrockruntime.model.ServiceUnavailableException;
 import software.amazon.awssdk.services.bedrockruntime.model.ThrottlingException;
+import com.mytripadvision.support.TestModels;
 import software.amazon.awssdk.services.bedrockruntime.model.TokenUsage;
 import software.amazon.awssdk.services.bedrockruntime.model.ConverseOutput;
 
@@ -37,7 +39,7 @@ class BedrockLlmTest {
 
     private static AppProperties.Llm config(String model, String finalModel, String region) {
         return new AppProperties.Llm("bedrock", model, finalModel, region, "", "", "http://x", "http://x",
-                Duration.ofSeconds(2), Duration.ofSeconds(2));
+                Duration.ofSeconds(2), Duration.ofSeconds(2), TestModels.PROVIDERS, TestModels.PRICES);
     }
 
     private LlmClient llm(String model, String finalModel, String region) {
@@ -71,7 +73,7 @@ class BedrockLlmTest {
     @Test
     void reply_isReadFromTheTextBlocks_andTokensAreAddedToUsage() {
         when(aws.converse(any(ConverseRequest.class))).thenReturn(reply("Hello from Nova", 1_000_000, 1_000_000));
-        Usage usage = new Usage();
+        Usage usage = new Usage(TestModels.PRICES);
 
         String text = llm().complete(usage, "be brief", "say hello");
 
@@ -84,7 +86,7 @@ class BedrockLlmTest {
     void request_hasTheSystemBlock_oneUserMessage_andTheModelId() {
         when(aws.converse(any(ConverseRequest.class))).thenReturn(reply("ok", 1, 1));
 
-        llm().complete(new Usage(), "be brief", "say hello");
+        llm().complete(new Usage(TestModels.PRICES), "be brief", "say hello");
 
         ArgumentCaptor<ConverseRequest> sent = ArgumentCaptor.forClass(ConverseRequest.class);
         verify(aws).converse(sent.capture());
@@ -100,7 +102,7 @@ class BedrockLlmTest {
     void withoutASystemPrompt_noSystemBlockIsSent() {
         when(aws.converse(any(ConverseRequest.class))).thenReturn(reply("ok", 1, 1));
 
-        llm().complete(new Usage(), null, "hi");
+        llm().complete(new Usage(TestModels.PRICES), null, "hi");
 
         ArgumentCaptor<ConverseRequest> sent = ArgumentCaptor.forClass(ConverseRequest.class);
         verify(aws).converse(sent.capture());
@@ -114,8 +116,8 @@ class BedrockLlmTest {
         when(aws.converse(any(ConverseRequest.class))).thenReturn(reply("ok", 1, 1));
         LlmClient llm = llm();
 
-        llm.complete(new Usage(), null, "normal");
-        llm.completeWithFinalModel(new Usage(), null, "final");
+        llm.complete(new Usage(TestModels.PRICES), null, "normal");
+        llm.completeWithFinalModel(new Usage(TestModels.PRICES), null, "final");
 
         ArgumentCaptor<ConverseRequest> sent = ArgumentCaptor.forClass(ConverseRequest.class);
         verify(aws, times(2)).converse(sent.capture());
@@ -128,8 +130,8 @@ class BedrockLlmTest {
         when(aws.converse(any(ConverseRequest.class))).thenReturn(reply("ok", 1, 1));
         LlmClient llm = llm("my.model-a", "my.model-b", null);
 
-        llm.complete(new Usage(), null, "normal");
-        llm.completeWithFinalModel(new Usage(), null, "final");
+        llm.complete(new Usage(TestModels.PRICES), null, "normal");
+        llm.completeWithFinalModel(new Usage(TestModels.PRICES), null, "final");
 
         ArgumentCaptor<ConverseRequest> sent = ArgumentCaptor.forClass(ConverseRequest.class);
         verify(aws, times(2)).converse(sent.capture());
@@ -139,7 +141,7 @@ class BedrockLlmTest {
     @Test
     void finalModelCost_usesTheNovaProPrice() {
         when(aws.converse(any(ConverseRequest.class))).thenReturn(reply("ok", 1_000_000, 1_000_000));
-        Usage usage = new Usage();
+        Usage usage = new Usage(TestModels.PRICES);
 
         llm().completeWithFinalModel(usage, null, "final");
 
@@ -152,7 +154,7 @@ class BedrockLlmTest {
     void throttling_isRetriedOnce_thenSucceeds() {
         when(aws.converse(any(ConverseRequest.class))).thenThrow(throttling()).thenReturn(reply("second try", 1, 1));
 
-        assertThat(llm().complete(new Usage(), null, "hi")).isEqualTo("second try");
+        assertThat(llm().complete(new Usage(TestModels.PRICES), null, "hi")).isEqualTo("second try");
         verify(aws, times(2)).converse(any(ConverseRequest.class));
     }
 
@@ -160,7 +162,7 @@ class BedrockLlmTest {
     void throttlingTwice_failsWithTheShortCode() {
         when(aws.converse(any(ConverseRequest.class))).thenThrow(throttling());
 
-        assertThatThrownBy(() -> llm().complete(new Usage(), null, "hi"))
+        assertThatThrownBy(() -> llm().complete(new Usage(TestModels.PRICES), null, "hi"))
                 .isInstanceOf(ExternalServiceException.class).hasMessage("llm: ThrottlingException").hasNoCause();
         verify(aws, times(2)).converse(any(ConverseRequest.class));
     }
@@ -171,7 +173,7 @@ class BedrockLlmTest {
                 "ServiceUnavailableException", "try later").build();
         when(aws.converse(any(ConverseRequest.class))).thenThrow(unavailable).thenReturn(reply("back", 1, 1));
 
-        assertThat(llm().complete(new Usage(), null, "hi")).isEqualTo("back");
+        assertThat(llm().complete(new Usage(TestModels.PRICES), null, "hi")).isEqualTo("back");
     }
 
     @Test
@@ -179,7 +181,7 @@ class BedrockLlmTest {
         when(aws.converse(any(ConverseRequest.class)))
                 .thenThrow(SdkClientException.create("Unable to execute HTTP request: bedrock-runtime.us-east-1.amazonaws.com"));
 
-        assertThatThrownBy(() -> llm().complete(new Usage(), null, "hi"))
+        assertThatThrownBy(() -> llm().complete(new Usage(TestModels.PRICES), null, "hi"))
                 .hasMessage("llm: timeout or connection error");
         verify(aws, times(2)).converse(any(ConverseRequest.class));
     }
@@ -190,7 +192,7 @@ class BedrockLlmTest {
                 "User: arn:aws:sts::123456789012:assumed-role/task is not authorized to perform bedrock:InvokeModel").build();
         when(aws.converse(any(ConverseRequest.class))).thenThrow(denied);
 
-        assertThatThrownBy(() -> llm().complete(new Usage(), null, "hi"))
+        assertThatThrownBy(() -> llm().complete(new Usage(TestModels.PRICES), null, "hi"))
                 .isInstanceOf(ExternalServiceException.class)
                 .hasMessage("llm: AccessDeniedException")
                 .satisfies(ex -> assertThat(ex.getMessage()).doesNotContain("arn:").doesNotContain("123456789012"))
@@ -204,7 +206,7 @@ class BedrockLlmTest {
                 "arn:aws:iam::123456789012:role/x", "denied").build();
         when(aws.converse(any(ConverseRequest.class))).thenThrow(odd);
 
-        assertThatThrownBy(() -> llm().complete(new Usage(), null, "hi")).hasMessage("llm: HTTP 403");
+        assertThatThrownBy(() -> llm().complete(new Usage(TestModels.PRICES), null, "hi")).hasMessage("llm: HTTP 403");
     }
 
     @Test
@@ -213,7 +215,7 @@ class BedrockLlmTest {
                 .output(ConverseOutput.builder().message(Message.builder().role(ConversationRole.ASSISTANT)
                         .content(java.util.List.<ContentBlock>of()).build()).build()).build());
 
-        assertThat(llm().complete(new Usage(), null, "hi")).isEmpty();
+        assertThat(llm().complete(new Usage(TestModels.PRICES), null, "hi")).isEmpty();
     }
 
     // ---- configuration
@@ -221,7 +223,7 @@ class BedrockLlmTest {
     @Test
     void bedrockDefaults_areNovaLite_forTheModel_andNovaPro_forTheFinalAnswer_inUsEast1() {
         var config = new AppProperties.Llm("Bedrock", null, "", " ", "", "", "http://x", "http://x",
-                Duration.ofSeconds(1), Duration.ofSeconds(1));
+                Duration.ofSeconds(1), Duration.ofSeconds(1), TestModels.PROVIDERS, TestModels.PRICES);
 
         assertThat(config.isBedrock()).isTrue();
         assertThat(config.resolvedModel()).isEqualTo("us.amazon.nova-lite-v1:0");
@@ -232,7 +234,7 @@ class BedrockLlmTest {
     @Test
     void bedrockSettings_canBeOverridden() {
         var config = new AppProperties.Llm("bedrock", "a", "b", "eu-west-1", "", "", "http://x", "http://x",
-                Duration.ofSeconds(1), Duration.ofSeconds(1));
+                Duration.ofSeconds(1), Duration.ofSeconds(1), TestModels.PROVIDERS, TestModels.PRICES);
 
         assertThat(config.resolvedModel()).isEqualTo("a");
         assertThat(config.resolvedFinalModel()).isEqualTo("b");
@@ -240,11 +242,21 @@ class BedrockLlmTest {
     }
 
     @Test
+    void aProviderWithoutModelsInTheSettings_isReportedClearly() {
+        var config = new AppProperties.Llm("bedrock", "", "", null, "", "", "http://x", "http://x",
+                Duration.ofSeconds(1), Duration.ofSeconds(1), Map.of(), TestModels.PRICES);
+
+        assertThatThrownBy(config::resolvedModel).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("No default model for provider 'bedrock'")
+                .hasMessageContaining("mytripadvision.llm.providers");
+    }
+
+    @Test
     void otherProviders_keepTheirDefaults_groqUsesOneModel_openaiUsesGpt4oForTheFinalAnswer() {
         var groq = new AppProperties.Llm("groq", null, null, null, "", "k", "http://x", "http://x",
-                Duration.ofSeconds(1), Duration.ofSeconds(1));
+                Duration.ofSeconds(1), Duration.ofSeconds(1), TestModels.PROVIDERS, TestModels.PRICES);
         var openai = new AppProperties.Llm("openai", null, null, null, "k", "", "http://x", "http://x",
-                Duration.ofSeconds(1), Duration.ofSeconds(1));
+                Duration.ofSeconds(1), Duration.ofSeconds(1), TestModels.PROVIDERS, TestModels.PRICES);
 
         assertThat(groq.resolvedModel()).isEqualTo("openai/gpt-oss-120b");
         assertThat(groq.resolvedFinalModel()).isEqualTo("openai/gpt-oss-120b");
@@ -262,7 +274,7 @@ class BedrockLlmTest {
 
     @Test
     void novaPrices_areAlsoFoundWithoutTheUsPrefix() {
-        Usage usage = new Usage();
+        Usage usage = new Usage(TestModels.PRICES);
 
         usage.add("amazon.nova-lite-v1:0", 1_000_000, 0);
         usage.add("us.amazon.nova-pro-v1:0", 0, 1_000_000);

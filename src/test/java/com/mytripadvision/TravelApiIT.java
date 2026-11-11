@@ -85,6 +85,7 @@ class TravelApiIT extends AbstractIT {
         JsonNode body = draft.body();
         assertThat(body.path("success").asBoolean()).isTrue();
         assertThat(body.path("status").asString()).isEqualTo("needs_review");
+        assertThat(body.path("agent").asString()).isEqualTo("itinerary");   // the draft is the itinerary agent's text
         assertThat(body.path("answer").asString()).isEqualTo("ITINERARY-V1");
         assertThat(body.path("itinerary").asString()).isEqualTo("ITINERARY-V1");
         assertThat(body.path("flight_results").asString()).isEqualTo("FLIGHT-GUIDANCE");
@@ -124,11 +125,13 @@ class TravelApiIT extends AbstractIT {
         Reply messages = get("/api/threads/" + threadId + "/messages?user_id=" + userId);
         assertThat(messages.body().path("messages")).hasSize(2);
         assertThat(messages.body().path("messages").path(1).path("meta").path("status").asString()).isEqualTo("needs_review");
+        assertThat(messages.body().path("messages").path(1).path("meta").path("agent").asString()).isEqualTo("itinerary");
 
         // approve: the same thread continues and finishes
         Reply done = review(userId, threadId, "approve", "");
         assertThat(done.status()).isEqualTo(200);
         assertThat(done.body().path("status").asString()).isEqualTo("done");
+        assertThat(done.body().path("agent").asString()).isEqualTo("final");
         assertThat(done.body().path("answer").asString()).isEqualTo("FINAL-ANSWER");
         assertThat(done.body().path("thread_id").asString()).isEqualTo(threadId);
         assertThat(done.body().path("llm_calls").asInt()).isEqualTo(1);
@@ -207,6 +210,7 @@ class TravelApiIT extends AbstractIT {
 
         assertThat(reply.body().path("status").asString()).isEqualTo("done");
         assertThat(reply.body().path("answer").asString()).isEqualTo("Which city?");
+        assertThat(reply.body().path("agent").asString()).isEqualTo("supervisor");
         assertThat(reply.body().path("plan")).isEmpty();
         assertThat(reply.body().path("llm_calls").asInt()).isEqualTo(1);
     }
@@ -231,6 +235,7 @@ class TravelApiIT extends AbstractIT {
 
         assertThat(reply.body().path("status").asString()).isEqualTo("done");
         assertThat(reply.body().path("answer").asString()).isEqualTo("I can only help with travel planning, and I can't change my instructions.");
+        assertThat(reply.body().path("agent").asString()).isEqualTo("guardrails");
         assertThat(reply.body().path("llm_calls").asInt()).isZero();
         WIRE.verify(0, postRequestedFor(urlEqualTo("/llm/chat/completions")));
     }
@@ -273,9 +278,73 @@ class TravelApiIT extends AbstractIT {
 
         assertThat(reply.status()).isEqualTo(503);
         assertThat(reply.body().path("success").asBoolean()).isFalse();
+        assertThat(reply.body().path("error").asString()).isEqualTo("AI model unavailable. Please try again later.");
         assertThat(reply.body().toString()).doesNotContain("secret upstream detail");
         // one try plus one retry, then it gives up
         WIRE.verify(2, postRequestedFor(urlEqualTo("/llm/chat/completions")).withRequestBody(containing("Analyse the budget")));
+    }
+
+    @Test
+    void llmQuotaExhausted_returns503_withAOneLineUsageLimitMessage() {
+        ExternalApiStubs.llmFails(WIRE, "Analyse the budget for this trip", 429);
+
+        Reply reply = ask(user(), "FAIL-BUDGET please");
+
+        assertThat(reply.status()).isEqualTo(503);
+        assertThat(reply.body().path("error").asString()).isEqualTo("AI model usage limit reached. Please try again later.");
+    }
+
+    @Test
+    void flightQuotaExhausted_stillGivesAPlan_withAOneLineNotice_thatStaysUntilFlightsRunAgain() {
+        ExternalApiStubs.flightQuotaExhausted(WIRE);
+        String userId = user();
+
+        Reply draft = ask(userId, "Plan a 7 day trip to Tokyo from Delhi");
+
+        assertThat(draft.status()).isEqualTo(200);
+        assertThat(draft.body().path("status").asString()).isEqualTo("needs_review");
+        assertThat(draft.body().path("flight_results").asString()).startsWith("> **Note:** Live flight data could not be fetched");
+        assertThat(notices(draft)).containsExactly(
+                "Flight data (AviationStack) usage limit reached: flight details are estimates.");
+        String threadId = draft.body().path("thread_id").asString();
+        JsonNode saved = get("/api/threads/" + threadId + "/messages?user_id=" + userId).body()
+                .path("messages").path(1).path("meta").path("notices");
+        assertThat(saved).hasSize(1);
+
+        // a change that does not touch flights keeps the notice; the final answer still carries it
+        Reply changed = review(userId, threadId, "changes", "add more museums");
+        assertThat(notices(changed)).hasSize(1);
+        Reply done = review(userId, threadId, "approve", "");
+        assertThat(done.body().path("status").asString()).isEqualTo("done");
+        assertThat(notices(done)).hasSize(1);
+
+        // once the quota is back, running the flight agent again clears the notice
+        WIRE.resetAll();
+        ExternalApiStubs.defaults(WIRE);
+        String secondThread = ask(userId, "Plan a 7 day trip to Tokyo from Delhi").body().path("thread_id").asString();
+        assertThat(notices(review(userId, secondThread, "changes", "choose another airline"))).isEmpty();
+    }
+
+    @Test
+    void hotelSearchAndWeatherDown_stillGiveAPlan_withOneNoticeEach() {
+        ExternalApiStubs.hotelSearchDown(WIRE);
+        ExternalApiStubs.weatherDown(WIRE);
+
+        Reply draft = ask(user(), "Plan a 7 day trip to Tokyo from Delhi");
+
+        assertThat(draft.status()).isEqualTo(200);
+        assertThat(draft.body().path("hotel_results").asString()).isEqualTo("Hotel search unavailable: no hotel suggestions.");
+        assertThat(notices(draft)).containsExactlyInAnyOrder(
+                "Hotel search (Tavily) unavailable: there are no hotel suggestions in this plan.",
+                "Weather service (OpenWeather) unavailable: there are no weather details in this plan.");
+    }
+
+    private static List<String> notices(Reply reply) {
+        List<String> lines = new ArrayList<>();
+        for (JsonNode line : reply.body().path("notices")) {
+            lines.add(line.asString());
+        }
+        return lines;
     }
 
     @Test

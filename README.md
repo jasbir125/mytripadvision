@@ -61,8 +61,10 @@ Every value is read from the environment; nothing secret is stored in the reposi
 | `spring.datasource.username` | `DB_USERNAME` | `mytripadvision` | database user |
 | `spring.datasource.password` | `DB_PASSWORD` | empty | database password (**required** in production; compose uses a local-only value) |
 | `mytripadvision.llm.provider` | `LLM_PROVIDER` | `groq` | `openai`, `groq` or `bedrock` (AWS, see below) |
-| `mytripadvision.llm.model` | `LLM_MODEL` | `openai/gpt-oss-120b` (groq), `gpt-4o-mini` (openai), `us.amazon.nova-lite-v1:0` (bedrock) | model name; for bedrock a model id or an inference profile id |
-| `mytripadvision.llm.final-model` | `LLM_FINAL_MODEL` | same as `LLM_MODEL`; `us.amazon.nova-pro-v1:0` for bedrock | stronger model used only for the final answer (e.g. `gpt-4o`) |
+| `mytripadvision.llm.model` | `LLM_MODEL` | empty = the provider's `model` under `mytripadvision.llm.providers` | override for one run; for bedrock a model id or an inference profile id |
+| `mytripadvision.llm.final-model` | `LLM_FINAL_MODEL` | empty = the provider's `final-model` under `mytripadvision.llm.providers` | override for the stronger model used only for the final answer |
+| `mytripadvision.llm.providers` | - | openai `gpt-4o-mini` / `gpt-4o`, groq `openai/gpt-oss-120b`, bedrock `us.amazon.nova-lite-v1:0` / `us.amazon.nova-pro-v1:0` | **all AI models in one place**: each provider's `model` (agents) and `final-model` (final answer) |
+| `mytripadvision.llm.prices` | - | see `application.yml` | USD per 1M tokens per model, for the cost shown under answers; unlisted models count as free |
 | `mytripadvision.llm.region` | `AWS_REGION` | `us-east-1` | AWS region, only for `bedrock` |
 | `mytripadvision.llm.groq-api-key` | `GROQ_API_KEY` | empty | **required** when the provider is `groq` |
 | `mytripadvision.llm.openai-api-key` | `OPENAI_API_KEY` | empty | **required** when the provider is `openai` |
@@ -108,7 +110,7 @@ The paths stay under `/api` (not `/api/v1`) because the bundled web page calls t
 
 | Method and path | What it does | Success | Errors |
 |-----------------|--------------|---------|--------|
-| `POST /api/travel` | New question on a new or existing thread | `200` `{success, status, thread_id, answer, flight_results, hotel_results, itinerary, budget_analysis, trip_constraints, llm_calls, request_id, plan, token_usage}`; `status` is `done` or `needs_review` | `400` validation, `404` thread of another user, `503` a provider is unavailable, `500` |
+| `POST /api/travel` | New question on a new or existing thread | `200` `{success, status, agent, thread_id, answer, flight_results, hotel_results, itinerary, budget_analysis, trip_constraints, llm_calls, request_id, plan, notices, token_usage}`; `status` is `done` or `needs_review`; `agent` is who wrote the answer (`guardrails`, `supervisor`, `itinerary` or `final`); `notices` are one-line warnings about a service that was down or out of quota | `400` validation, `404` thread of another user, `503` a provider is unavailable, `500` |
 | `POST /api/travel/review` | `{thread_id, user_id, action: approve\|changes, feedback}` for a plan that waits | same body as above | `400`, `409` nothing waits for review / another request changed the chat, `503` |
 | `GET /api/threads?user_id=` | The user's chats (50 newest) as `{threads: [{thread_id, updated_at, title}]}` | `200` | `400` |
 | `GET /api/threads/{id}/messages?user_id=` | `{messages: [{role, content, meta, created_at}]}` | `200` | `400` |
@@ -134,7 +136,7 @@ Runs unit and slice tests (Surefire, `*Test`), integration tests (Failsafe, `*IT
 - Probes: `/actuator/health/liveness` and `/actuator/health/readiness`. Graceful shutdown (30 s) and virtual threads are on.
 - Logs: every line carries `[mytripadvision,<correlationId>,req=<requestId>]`. The `X-Correlation-Id` header is accepted (letters, digits, `._:-`, up to 64 characters) or generated, and echoed in the response. `requestId` is a short id per HTTP request; it is also returned as `request_id`, so a log search by it shows everything one request did. Messages use `[component]` prefixes such as `[supervisor]` and `[knowledge]`. Keys, payloads and user questions are never logged.
 - Remote calls: each provider has timeouts, and one retry (only for I/O errors, 429 and 5xx). A provider that still fails gives `503`; its error text, URL and key are never passed on. There is no circuit breaker.
-- Observability is deliberately simple: request-id log lines, a `took ... ms` line per question, and `token_usage` (prompt, completion, total, `cost_usd`) in every response. The cost is only computed for `gpt-4o-mini`; other models count as free, like in the Python app.
+- Observability is deliberately simple: request-id log lines, a `took ... ms` line per question, and `token_usage` (prompt, completion, total, `cost_usd`) in every response. The cost is computed for the models listed under `mytripadvision.llm.prices` in `application.yml`; other models count as free.
 - Cleanup: search chunks older than 24 hours are deleted hourly (`RagCleanupJob`).
 
 ## Differences from the Python app

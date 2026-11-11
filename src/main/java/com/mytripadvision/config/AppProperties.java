@@ -1,8 +1,11 @@
 package com.mytripadvision.config;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.Positive;
 import java.time.Duration;
+import java.util.List;
+import java.util.Map;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
@@ -15,11 +18,22 @@ public record AppProperties(
     /**
      * Provider is openai, groq or bedrock. openai and groq need their API key at the first call; bedrock uses
      * the AWS credentials of the machine or ECS task (no key setting).
+     * All model ids live in application.yml: {@code providers} holds each provider's default models and
+     * {@code prices} what they cost; {@code model} and {@code finalModel} override the defaults when set.
      */
     public record Llm(String provider, String model, String finalModel, String region,
                       String openaiApiKey, String groqApiKey,
                       @NotBlank String openaiBaseUrl, @NotBlank String groqBaseUrl,
-                      Duration connectTimeout, Duration readTimeout) {
+                      Duration connectTimeout, Duration readTimeout,
+                      @NotEmpty Map<String, Models> providers, List<Price> prices) {
+
+        /** A provider's default models: {@code model} runs the agents, {@code finalModel} writes the final answer. */
+        public record Models(String model, String finalModel) {
+        }
+
+        /** USD per 1 million tokens of one model. */
+        public record Price(@NotBlank String model, double input, double output) {
+        }
 
         public boolean isOpenai() {
             return "openai".equals(resolvedProvider());
@@ -47,28 +61,35 @@ public record AppProperties(
             return region == null || region.isBlank() ? "us-east-1" : region;
         }
 
+        /** LLM_MODEL, or the provider's default model from application.yml. */
         public String resolvedModel() {
-            if (model != null && !model.isBlank()) {
-                return model;
-            }
-            if (isBedrock()) {
-                return "us.amazon.nova-lite-v1:0";
-            }
-            return isOpenai() ? "gpt-4o-mini" : "openai/gpt-oss-120b";
+            return hasText(model) ? model : defaults().model();
         }
 
         /**
-         * The model that writes the final answer: LLM_FINAL_MODEL. When it is not set, openai uses gpt-4o and
-         * bedrock uses Nova Pro (a stronger model than the one for the agents); groq uses the normal model.
+         * The model that writes the final answer: LLM_FINAL_MODEL, or the provider's final-model from
+         * application.yml. A provider without one uses the normal model for the final answer too.
          */
         public String resolvedFinalModel() {
-            if (finalModel != null && !finalModel.isBlank()) {
+            if (hasText(finalModel)) {
                 return finalModel;
             }
-            if (isOpenai()) {
-                return "gpt-4o";
+            String fallback = defaults().finalModel();
+            return hasText(fallback) ? fallback : resolvedModel();
+        }
+
+        /** The provider's entry under mytripadvision.llm.providers. */
+        private Models defaults() {
+            Models found = providers == null ? null : providers.get(resolvedProvider());
+            if (found == null || !hasText(found.model())) {
+                throw new IllegalStateException("No default model for provider '" + resolvedProvider()
+                        + "': add it under mytripadvision.llm.providers in application.yml");
             }
-            return isBedrock() ? "us.amazon.nova-pro-v1:0" : resolvedModel();
+            return found;
+        }
+
+        private static boolean hasText(String value) {
+            return value != null && !value.isBlank();
         }
     }
 

@@ -2,12 +2,13 @@ package com.mytripadvision.agent;
 
 import com.mytripadvision.client.LlmClient;
 import com.mytripadvision.client.WeatherClient;
+import com.mytripadvision.exception.ExternalServiceException;
 import com.mytripadvision.workflow.WorkflowState;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-/** Current weather and forecast for the destination city. */
+/** Current weather and forecast for the destination city. A weather service outage gives a one-line notice. */
 @Component
 @RequiredArgsConstructor
 @Slf4j
@@ -25,6 +26,9 @@ public class WeatherAgent {
                 Return only the city name.
                 """;
 
+    /** What the later agents read instead of weather data when the service could not be reached. */
+    static final String NO_DATA_TEXT = "Weather data unavailable.";
+
     private final LlmClient llm;
     private final WeatherClient weather;
 
@@ -34,8 +38,14 @@ public class WeatherAgent {
         String city = Agents.ask(llm, state, null, PROMPT.replace("{query}", state.getUserQuery())).strip();
         log.info("[weather] destination city: '{}'", city);
 
-        String result = "Current Weather:\n" + weather.current(city) + "\n\nForecast:\n" + weather.forecast(city);
-        log.info("[weather] done (current + forecast fetched)");
-        return result;
+        try {
+            String result = "Current Weather:\n" + weather.current(city) + "\n\nForecast:\n" + weather.forecast(city);
+            log.info("[weather] done (current + forecast fetched)");
+            return result;
+        } catch (ExternalServiceException ex) {
+            log.warn("[weather] fetch failed: {}", ex.getMessage());
+            state.addNotice("weather", Outage.reason(ex) + ": there are no weather details in this plan.");
+            return NO_DATA_TEXT;
+        }
     }
 }

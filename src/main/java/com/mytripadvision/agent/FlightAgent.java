@@ -6,6 +6,7 @@ import com.mytripadvision.exception.ExternalServiceException;
 import com.mytripadvision.workflow.Parallel;
 import com.mytripadvision.workflow.WorkflowState;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -105,14 +106,33 @@ public class FlightAgent {
         log.info("[flight] started");
         try {
             List<String> airlines = pickAirlines(state);
-            Map<String, String> liveFlights = fetchFlights(airlines);
+            List<String> failures = Collections.synchronizedList(new ArrayList<>());
+            Map<String, String> liveFlights = fetchFlights(airlines, failures);
+            if (liveFlights.isEmpty()) {
+                state.addNotice("flight", noLiveDataNotice(failures));
+            }
             String guidance = buildGuidance(state, liveFlights);
             log.info("[flight] done");
             return liveFlights.isEmpty() ? NO_LIVE_DATA_BANNER + guidance : guidance;
         } catch (RuntimeException ex) {
             log.warn("[flight] failed: {}", ex.getClass().getSimpleName());
+            state.addNotice("flight", Outage.reason(ex) + ": the flight agent could not run, so there is no flight guidance.");
             return "Flight information unavailable: " + ex.getMessage();
         }
+    }
+
+    /** The one line the user sees when no airline returned live flights; a quota problem is named first. */
+    static String noLiveDataNotice(List<String> failures) {
+        if (failures.isEmpty()) {
+            return "Live flight data not found: flight details are estimates.";
+        }
+        String reason = failures.get(0);
+        for (String failure : failures) {
+            if (failure.contains("usage limit")) {
+                reason = failure;
+            }
+        }
+        return reason + ": flight details are estimates.";
     }
 
     /** Step 1: LLM call that returns airline names. */
@@ -128,11 +148,11 @@ public class FlightAgent {
         return airlines;
     }
 
-    /** Step 2: live flights per airline, all at once. Airlines that fail are left out. */
-    private Map<String, String> fetchFlights(List<String> airlines) {
+    /** Step 2: live flights per airline, all at once. Airlines that fail are left out; why goes into failures. */
+    private Map<String, String> fetchFlights(List<String> airlines, List<String> failures) {
         Map<String, Supplier<String>> tasks = new LinkedHashMap<>();
         for (String airline : airlines) {
-            tasks.put(airline, () -> fetchOneAirline(airline));
+            tasks.put(airline, () -> fetchOneAirline(airline, failures));
         }
         Map<String, String> found = new LinkedHashMap<>();
         Parallel.run(tasks).forEach((airline, data) -> {
@@ -143,11 +163,12 @@ public class FlightAgent {
         return found;
     }
 
-    private String fetchOneAirline(String airline) {
+    private String fetchOneAirline(String airline, List<String> failures) {
         try {
             return flights.flightsForAirline(airline, FLIGHTS_PER_AIRLINE);
         } catch (ExternalServiceException ex) {
             log.warn("[flight] {}: request failed: {}", airline, ex.getMessage());
+            failures.add(Outage.reason(ex));
             return "";
         }
     }

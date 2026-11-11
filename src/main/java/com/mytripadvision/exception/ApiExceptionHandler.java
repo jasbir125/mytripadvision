@@ -1,5 +1,6 @@
 package com.mytripadvision.exception;
 
+import com.mytripadvision.agent.Outage;
 import jakarta.validation.ConstraintViolationException;
 import java.util.ArrayList;
 import java.util.List;
@@ -91,8 +92,9 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(ExternalServiceException.class)
     ProblemDetail dependencyFailed(ExternalServiceException ex) {
         log.warn("Request failed because a dependency is unavailable service={}", ex.getService());
+        // one line that names the service and says whether it is down or out of quota, never the remote text
         return problem(HttpStatus.SERVICE_UNAVAILABLE, "Service Unavailable",
-                "A service this request depends on is unavailable. Please try again in a moment.");
+                Outage.reason(ex) + ". Please try again later.");
     }
 
     @ExceptionHandler(Exception.class)

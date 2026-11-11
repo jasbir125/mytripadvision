@@ -38,6 +38,8 @@ public class WorkflowState {
     private String reasoning = "";
     private String reviewFeedback = "";
     private int revisionCount;
+    /** One line per agent whose service was down or out of quota, shown to the user next to the answer. */
+    private Map<String, String> notices = new LinkedHashMap<>();
     /** LLM calls made by the current HTTP request (reset when a request starts). */
     private int llmCalls;
 
@@ -48,6 +50,20 @@ public class WorkflowState {
     /** Synchronized because the flight, hotel and weather agents run in parallel. */
     public synchronized void addLlmCalls(int calls) {
         this.llmCalls += calls;
+    }
+
+    /** Synchronized for the same reason. A notice stays until the same agent runs again. */
+    public synchronized void addNotice(String agent, String text) {
+        notices.put(agent, text);
+    }
+
+    public synchronized void clearNotice(String agent) {
+        notices.remove(agent);
+    }
+
+    /** The notices as plain lines, for the response and the chat history. */
+    public synchronized List<String> noticeLines() {
+        return new ArrayList<>(notices.values());
     }
 
     public boolean planned(String agent) {

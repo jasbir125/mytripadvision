@@ -75,6 +75,7 @@ class TravelWorkflowTest {
         WorkflowOutcome outcome = workflow().start(state);
 
         assertThat(outcome.status()).isEqualTo(WorkflowOutcome.Status.DONE);
+        assertThat(outcome.agent()).isEqualTo(WorkflowOutcome.GUARDRAILS);
         assertThat(outcome.answer()).contains("I can only help with travel planning");
         assertThat(state.getPlan()).isEmpty();
         verify(supervisor, never()).decide(any());
@@ -87,7 +88,7 @@ class TravelWorkflowTest {
 
         WorkflowOutcome outcome = workflow().start(state("hotels please"));
 
-        assertThat(outcome).isEqualTo(new WorkflowOutcome(WorkflowOutcome.Status.DONE, "Where do you want to go?"));
+        assertThat(outcome).isEqualTo(new WorkflowOutcome(WorkflowOutcome.Status.DONE, WorkflowOutcome.SUPERVISOR, "Where do you want to go?"));
         verify(flight, never()).run(any());
         verify(finalAgent, never()).run(any());
     }
@@ -99,7 +100,7 @@ class TravelWorkflowTest {
 
         WorkflowOutcome outcome = workflow().start(state);
 
-        assertThat(outcome).isEqualTo(new WorkflowOutcome(WorkflowOutcome.Status.NEEDS_REVIEW, "ITINERARY"));
+        assertThat(outcome).isEqualTo(new WorkflowOutcome(WorkflowOutcome.Status.NEEDS_REVIEW, WorkflowOutcome.ITINERARY, "ITINERARY"));
         assertThat(state.getFlightResults()).isEqualTo("FLIGHTS");
         assertThat(state.getHotelResults()).isEqualTo("HOTELS");
         assertThat(state.getWeatherResults()).isEqualTo("WEATHER");
@@ -117,9 +118,24 @@ class TravelWorkflowTest {
 
         WorkflowOutcome outcome = workflow().resume(state, "approve", "");
 
-        assertThat(outcome).isEqualTo(new WorkflowOutcome(WorkflowOutcome.Status.DONE, "FINAL"));
+        assertThat(outcome).isEqualTo(new WorkflowOutcome(WorkflowOutcome.Status.DONE, WorkflowOutcome.FINAL, "FINAL"));
         assertThat(state.getSummary()).isEqualTo("NEW SUMMARY");
         assertThat(state.getRevisionCount()).isZero();
+    }
+
+    @Test
+    void anAgentThatRunsAgain_startsWithoutItsOldNotice() {
+        supervisorPlans(List.of("flight", "hotel", "weather", "budget", "itinerary"));
+        WorkflowState state = state("plan Tokyo");
+        workflow().start(state);
+        state.addNotice("flight", "Flight data (AviationStack) usage limit reached: flight details are estimates.");
+        state.addNotice("hotel", "Hotel search (Tavily) unavailable: there are no hotel suggestions in this plan.");
+
+        workflow().resume(state, "changes", "choose another airline");
+
+        // flights ran again (and the mock reported no problem); hotels did not run, so their notice stays
+        assertThat(state.noticeLines()).containsExactly(
+                "Hotel search (Tavily) unavailable: there are no hotel suggestions in this plan.");
     }
 
     @Test
@@ -163,7 +179,7 @@ class TravelWorkflowTest {
         WorkflowOutcome last = workflow().resume(state, "changes", "even more food");
 
         assertThat(state.getRevisionCount()).isEqualTo(2);
-        assertThat(last).isEqualTo(new WorkflowOutcome(WorkflowOutcome.Status.DONE, "FINAL"));
+        assertThat(last).isEqualTo(new WorkflowOutcome(WorkflowOutcome.Status.DONE, WorkflowOutcome.FINAL, "FINAL"));
     }
 
     @Test
@@ -173,7 +189,7 @@ class TravelWorkflowTest {
 
         WorkflowOutcome outcome = workflow().start(state("plan Tokyo"));
 
-        assertThat(outcome).isEqualTo(new WorkflowOutcome(WorkflowOutcome.Status.DONE, "FINAL"));
+        assertThat(outcome).isEqualTo(new WorkflowOutcome(WorkflowOutcome.Status.DONE, WorkflowOutcome.FINAL, "FINAL"));
     }
 
     @Test

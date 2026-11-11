@@ -27,6 +27,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.PropertyNamingStrategies;
+import com.mytripadvision.support.TestModels;
 import tools.jackson.databind.json.JsonMapper;
 
 /** The real HTTP clients (timeouts, status handling, mapping, retry) against a local stub server. */
@@ -59,7 +60,7 @@ class ExternalClientsTest {
     private AppProperties props(String key, Duration read) {
         return new AppProperties(
                 new AppProperties.Llm("openai", "gpt-4o-mini", "gpt-4o", null, key, "", "http://localhost:" + wire.port() + "/llm",
-                        "http://unused", Duration.ofSeconds(2), read),
+                        "http://unused", Duration.ofSeconds(2), read, TestModels.PROVIDERS, TestModels.PRICES),
                 http("/aviation", key, read), http("/tavily", key, read), http("/weather", key, read), null, null);
     }
 
@@ -159,7 +160,7 @@ class ExternalClientsTest {
                 .whenScenarioStateIs("second").willReturn(aResponse().withHeader("Content-Type", "application/json")
                         .withBody("{\"choices\": [{\"message\": {\"content\": \"hello again\"}}]}")));
 
-        assertThat(llm("k").complete(new Usage(), null, "hi")).isEqualTo("hello again");
+        assertThat(llm("k").complete(new Usage(TestModels.PRICES), null, "hi")).isEqualTo("hello again");
         wire.verify(2, postRequestedFor(urlPathEqualTo("/llm/chat/completions")));
     }
 
@@ -221,7 +222,7 @@ class ExternalClientsTest {
         wire.stubFor(post(urlPathEqualTo("/llm/chat/completions")).willReturn(aResponse()
                 .withHeader("Content-Type", "application/json").withBody("""
                         {"choices": [{"message": {"content": "hello"}}], "usage": {"prompt_tokens": 1000000, "completion_tokens": 0}}""")));
-        Usage usage = new Usage();
+        Usage usage = new Usage(TestModels.PRICES);
 
         String reply = llm("k").complete(usage, "system", "user");
 
@@ -236,7 +237,7 @@ class ExternalClientsTest {
         wire.stubFor(post(urlPathEqualTo("/llm/chat/completions")).willReturn(aResponse()
                 .withHeader("Content-Type", "application/json").withBody("""
                         {"choices": [{"message": {"content": "ok"}}], "usage": {"prompt_tokens": 1000000, "completion_tokens": 0}}""")));
-        Usage usage = new Usage();
+        Usage usage = new Usage(TestModels.PRICES);
 
         llm("k").complete(usage, null, "normal call");
         llm("k").completeWithFinalModel(usage, null, "final answer call");
@@ -251,16 +252,16 @@ class ExternalClientsTest {
     @Test
     void theFinalModel_defaultsPerProvider_whenItIsNotSet() {
         var notSet = new AppProperties.Llm("openai", "gpt-4o-mini", "", null, "k", "", "http://x", "http://x",
-                Duration.ofSeconds(1), Duration.ofSeconds(1));
+                Duration.ofSeconds(1), Duration.ofSeconds(1), TestModels.PROVIDERS, TestModels.PRICES);
 
         assertThat(notSet.resolvedFinalModel()).isEqualTo("gpt-4o");   // openai: a stronger model for the final answer
         assertThat(new AppProperties.Llm("groq", null, null, null, "", "k", "http://x", "http://x",
-                Duration.ofSeconds(1), Duration.ofSeconds(1)).resolvedFinalModel()).isEqualTo("openai/gpt-oss-120b");
+                Duration.ofSeconds(1), Duration.ofSeconds(1), TestModels.PROVIDERS, TestModels.PRICES).resolvedFinalModel()).isEqualTo("openai/gpt-oss-120b");
     }
 
     @Test
     void llm_withoutAKey_failsWithoutCallingTheApi() {
-        assertThatThrownBy(() -> llm("").complete(new Usage(), null, "hi")).isInstanceOf(ExternalServiceException.class)
+        assertThatThrownBy(() -> llm("").complete(new Usage(TestModels.PRICES), null, "hi")).isInstanceOf(ExternalServiceException.class)
                 .hasMessage("llm: API key is not configured");
         assertThat(wire.getAllServeEvents()).isEmpty();
     }
@@ -268,7 +269,7 @@ class ExternalClientsTest {
     @Test
     void llm_unknownProvider_isRejectedAtStartup() {
         var wrong = new AppProperties.Llm("azure", null, null, null, "k", "", "http://x", "http://x", Duration.ofSeconds(1),
-                Duration.ofSeconds(1));
+                Duration.ofSeconds(1), TestModels.PROVIDERS, TestModels.PRICES);
         var props = new AppProperties(wrong, null, null, null, null, null);
 
         assertThatThrownBy(() -> new LlmConfig().llmClient(props, null))

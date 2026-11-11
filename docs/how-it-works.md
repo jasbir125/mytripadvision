@@ -83,7 +83,7 @@ Read the top to the bottom. The dashed line is the review loop: a change request
 8. **You approve, or ask for changes.** A change re-runs only the agents it affects, then pauses again.
 9. **Final agent** (1 AI call, using the stronger model) turns all the results into the answer you read: summary, flights, hotels, weather, budget, itinerary, recommendations.
 10. **Memory writer** refreshes the short chat summary (1 AI call), on every second question.
-11. **The answer is saved and shown** with the agents that ran, the tokens used and the cost.
+11. **The answer is saved and shown** with the name of the agent that wrote it, the agents that ran, the tokens used and the cost. If a service was down or out of quota on the way (flight data, hotel search, weather), the plan still arrives and a one-line notice above it says which service and why. If the AI model itself is down or out of quota, the request fails with one line that says so.
 
 In our tests this request took about 30 seconds to reach the draft and about 12 more after approval. It made 6 AI calls before the review and 1 after. The cost was a few cents.
 

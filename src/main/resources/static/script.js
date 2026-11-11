@@ -13,7 +13,7 @@ const userId = localStorage.getItem("travel_user_id") || (() => {
 })();
 
 let currentThreadId = localStorage.getItem("travel_thread_id") || null;
-let messages = [];            // what is on screen: { role: "user"|"assistant", content, status?, stats? }
+let messages = [];            // what is on screen: { role: "user"|"assistant", content, status?, agent?, notices?, stats? }
 let waitingForReview = false; // true while the last answer is a draft the user has not approved yet
 let workingText = "";         // text of the "working..." bubble; empty when nothing is running
 
@@ -136,6 +136,41 @@ function isPlan(message) {
     return message.content.length > 500 && /^#{1,3} /m.test(message.content);
 }
 
+// The name of the agent that wrote the answer, as shown on the card.
+const AGENT_NAMES = {
+    guardrails: "Guardrails agent",
+    supervisor: "Supervisor agent",
+    itinerary: "Itinerary agent",
+    final: "Final agent"
+};
+
+// Answers saved before the agent was recorded have no "agent": work it out from what is known.
+function agentName(message) {
+    let agent = message.agent;
+    if (!agent) {
+        if (message.status === "needs_review") {
+            agent = "itinerary";
+        } else if (isPlan(message)) {
+            agent = "final";
+        } else {
+            agent = "supervisor";
+        }
+    }
+    return AGENT_NAMES[agent] || agent + " agent";
+}
+
+// One line per service that was down or out of quota while the answer was made.
+function noticeElements(message) {
+    const lines = [];
+    for (const text of message.notices || []) {
+        const line = document.createElement("div");
+        line.className = "notice";
+        line.textContent = "⚠ " + text;
+        lines.push(line);
+    }
+    return lines;
+}
+
 function messageElement(message, index, isLatestAnswer) {
     const row = document.createElement("div");
     row.className = "msg " + message.role;
@@ -158,7 +193,13 @@ function messageElement(message, index, isLatestAnswer) {
 
     if (plan) {
         card.appendChild(cardHeader(message, isLatestAnswer));
+    } else {
+        const from = document.createElement("div");
+        from.className = "card-from";
+        from.textContent = agentName(message);
+        card.appendChild(from);
     }
+    noticeElements(message).forEach(line => card.appendChild(line));
 
     const body = document.createElement("div");
     body.className = "card-body md";
@@ -173,10 +214,11 @@ function messageElement(message, index, isLatestAnswer) {
     return row;
 }
 
-// The row of small labels above a plan: draft or final, which agents ran, tokens and cost.
+// The row of small labels above a plan: who wrote it, draft or final, which agents ran, tokens and cost.
 function cardHeader(message, isLatestAnswer) {
     const head = document.createElement("div");
     head.className = "card-head";
+    head.appendChild(chip(agentName(message), "agent"));
 
     if (message.status === "needs_review" && !isLatestAnswer) {
         head.appendChild(chip("Earlier draft", "muted"));      // a newer answer has replaced it
@@ -340,6 +382,8 @@ function handleResult(data) {
         role: "assistant",
         content: data.answer,
         status: data.status,
+        agent: data.agent,
+        notices: data.notices || [],
         stats: { agents: data.plan || [], tokens: usage.total || 0, cost: usage.cost_usd || 0 }
     });
     waitingForReview = data.status === "needs_review";
@@ -456,7 +500,9 @@ async function openThread(threadId) {
     messages = data.messages.map(m => ({
         role: m.role,
         content: m.content,
-        status: m.meta ? m.meta.status : undefined
+        status: m.meta ? m.meta.status : undefined,
+        agent: m.meta ? m.meta.agent : undefined,
+        notices: m.meta && m.meta.notices ? m.meta.notices : []
     }));
 
     // A plan that was still waiting for review can be approved or changed after reopening.
