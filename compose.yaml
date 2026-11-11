@@ -1,0 +1,45 @@
+# Local development. Passwords below are for local use only and must never be reused elsewhere.
+name: mytripadvision
+
+services:
+  postgres:
+    # PostgreSQL with the pgvector extension (the knowledge base and hotel search results are vectors)
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_DB: mytripadvision
+      POSTGRES_USER: mytripadvision
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mytripadvision-local}
+    ports:
+      - "${POSTGRES_PORT:-15432}:5432"   # 15432 avoids clashing with a locally installed PostgreSQL
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mytripadvision -d mytripadvision"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  app:
+    # Optional: `docker compose --profile app up --build` runs the service itself next to the database.
+    profiles: ["app"]
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - path: .env          # API keys; the file is optional and never committed
+        required: false
+    environment:
+      DATABASE_URL: ""      # use the compose database even when .env points at a hosted one
+      DB_URL: jdbc:postgresql://postgres:5432/mytripadvision
+      DB_USERNAME: mytripadvision
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-mytripadvision-local}
+      EMBEDDING_CACHE_DIR: /models
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    volumes:
+      - model-cache:/models  # the embedding model (about 130 MB) is downloaded once
+
+volumes:
+  postgres-data:
+  model-cache:

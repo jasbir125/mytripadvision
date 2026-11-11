@@ -1,0 +1,114 @@
+# Everything the app needs is set here with a working local default. An environment variable of the
+# same name (the ${NAME:default} parts) still wins, which is how Docker and AWS override them.
+#
+# API KEYS are NOT stored in this file. Put them in config/local-secrets.yml (git-ignored, never copied
+# into the Docker image); it is loaded below. See config/local-secrets.example.yml.
+spring:
+  application:
+    name: mytripadvision
+  config:
+    import:
+      # The first path works when the app starts in mytripadvision/, the second when it starts one folder up.
+      - optional:file:./config/local-secrets.yml
+      - optional:file:./mytripadvision/config/local-secrets.yml
+  threads:
+    virtual:
+      enabled: true
+  mvc:
+    problemdetails:
+      enabled: true
+    static-path-pattern: /static/**
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+  datasource:
+    # Local database from compose.yaml (docker compose up -d postgres). On AWS the values come from the environment.
+    # A DATABASE_URL (postgresql://user:pass@host/db) wins over these when set; see DatabaseUrlConfig.
+    url: ${DB_URL:jdbc:postgresql://localhost:15432/mytripadvision}
+    username: ${DB_USERNAME:mytripadvision}
+    password: ${DB_PASSWORD:mytripadvision-local}   # local compose password only; never reuse it elsewhere
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+
+server:
+  port: ${PORT:8000}
+  shutdown: graceful
+
+mytripadvision:
+  database:
+    url: ${DATABASE_URL:}   # leave empty to use the spring.datasource settings above
+  llm:
+    # Which AI service answers: openai, groq or bedrock.
+    provider: ${LLM_PROVIDER:openai}
+    # Models. Leave both EMPTY to get the default for the chosen provider (so switching provider is one line):
+    #                 model (agents)              final-model (final answer)
+    #   openai        gpt-4o-mini                 gpt-4o
+    #   groq          openai/gpt-oss-120b         openai/gpt-oss-120b
+    #   bedrock       us.amazon.nova-lite-v1:0    us.amazon.nova-pro-v1:0     (no API key: uses AWS credentials)
+    # To choose your own, write the model id here, e.g.  model: gpt-4.1-mini
+    model: ${LLM_MODEL:}
+    final-model: ${LLM_FINAL_MODEL:}
+    region: ${AWS_REGION:us-east-1}          # only for provider=bedrock
+    openai-api-key: ${OPENAI_API_KEY:}       # real keys: config/local-secrets.yml
+    groq-api-key: ${GROQ_API_KEY:}
+    openai-base-url: https://api.openai.com/v1
+    groq-base-url: https://api.groq.com/openai/v1
+    connect-timeout: 5s
+    read-timeout: 120s
+  aviationstack:
+    api-key: ${AVIATIONSTACK_API_KEY:}
+    base-url: http://api.aviationstack.com/v1   # the free plan is HTTP only
+    connect-timeout: 5s
+    read-timeout: 20s
+  tavily:
+    api-key: ${TAVILY_API_KEY:}
+    base-url: https://api.tavily.com
+    connect-timeout: 5s
+    read-timeout: 30s
+    max-results: 8
+  openweather:
+    api-key: ${OPENWEATHER_API_KEY:}
+    base-url: https://api.openweathermap.org/data/2.5
+    connect-timeout: 5s
+    read-timeout: 15s
+  rag:
+    knowledge-location: ${KNOWLEDGE_LOCATION:classpath:knowledge_base}
+    min-score: 0.66
+    knowledge-top-k: 4
+    hotel-top-k: 6
+    chunk-chars: 700
+    chunk-overlap: 100
+    retention: 24h
+    embedding:
+      model-url: https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/onnx/model.onnx
+      tokenizer-url: https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/tokenizer.json
+      cache-dir: ${EMBEDDING_CACHE_DIR:${java.io.tmpdir}/mytripadvision-models}
+      max-tokens: 512
+      dimensions: 384
+  workflow:
+    human-review: ${HUMAN_REVIEW:on}   # on = pause for approve/changes before the final answer
+    max-revisions: 2
+    summary-every: 2
+    default-origin-iata: ${DEFAULT_ORIGIN_IATA:}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+      group:
+        readiness:
+          include: readinessState,db
+
+logging:
+  pattern:
+    correlation: "[${spring.application.name:},%X{correlationId:-},req=%X{requestId:-}] "
+  include-application-name: false

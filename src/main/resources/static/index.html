@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="MyTripAdvision Agent plans your trip: flights, hotels, weather, budget and a day-by-day itinerary.">
+    <meta name="color-scheme" content="light dark">
+
+    <title>MyTripAdvision Agent</title>
+
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%230e7c86'/%3E%3Cpath d='M24 8 8.5 14.6l5.3 2.1 2.1 5.3z' fill='%23fff'/%3E%3C/svg%3E">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body>
+<div class="app">
+
+    <!-- Left: the saved trips -->
+    <aside class="sidebar" id="sidebar" aria-label="Your trips">
+        <div class="brand">
+            <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+                <rect width="32" height="32" rx="9" fill="currentColor"/>
+                <path d="M24 8 8.5 14.6l5.3 2.1 2.1 5.3z" fill="#fff"/>
+            </svg>
+            <div class="brand-text">
+                <strong>MyTripAdvision</strong>
+                <span>Agent</span>
+            </div>
+        </div>
+
+        <button class="new-trip" onclick="newChat()">
+            <span aria-hidden="true">＋</span> New trip
+        </button>
+
+        <div class="side-label">Your trips</div>
+        <nav id="threadList" class="thread-list"></nav>
+
+        <div class="side-foot">
+            <span class="dot" aria-hidden="true"></span> Online
+        </div>
+    </aside>
+    <div class="scrim" id="scrim" onclick="toggleSidebar(false)"></div>
+
+    <!-- Right: the conversation -->
+    <main class="main">
+
+        <header class="topbar">
+            <button class="icon-btn menu-btn" aria-label="Show your trips" onclick="toggleSidebar(true)">☰</button>
+            <div class="topbar-title">
+                <h1 id="tripTitle">New trip</h1>
+                <p id="threadInfo">Tell me where you want to go</p>
+            </div>
+        </header>
+
+        <section id="conversation" class="conversation" aria-live="polite">
+
+            <div id="emptyState" class="empty">
+                <p class="eyebrow">Your travel planning agent</p>
+                <h2>Where to next?</h2>
+                <p class="lead">
+                    Describe a trip in your own words. I check flights, hotels and the weather, work out a budget
+                    and write a day-by-day plan. You review it before it is final.
+                </p>
+
+                <div class="ideas">
+                    <button class="idea" onclick="setPrompt('Plan a complete 7 days Japan trip from Bangladesh including flights, hotels and sightseeing under 2 lakhs.')">
+                        <span class="idea-icon" aria-hidden="true">🗾</span>
+                        <strong>Japan, 7 days</strong>
+                        <span>From Bangladesh, flights, hotels and sightseeing under 2 lakhs</span>
+                    </button>
+                    <button class="idea" onclick="setPrompt('Plan a 5 days Dubai trip from Dhaka with flights, hotels and sightseeing.')">
+                        <span class="idea-icon" aria-hidden="true">🏙️</span>
+                        <strong>Dubai, 5 days</strong>
+                        <span>From Dhaka with flights, hotels and sightseeing</span>
+                    </button>
+                    <button class="idea" onclick="setPrompt('Plan a 7 days Thailand trip from Bangladesh with budget hotels and sightseeing.')">
+                        <span class="idea-icon" aria-hidden="true">🏝️</span>
+                        <strong>Thailand, 7 days</strong>
+                        <span>Budget hotels and sightseeing, from Bangladesh</span>
+                    </button>
+                    <button class="idea" onclick="setPrompt('Give me all country flight info.')">
+                        <span class="idea-icon" aria-hidden="true">✈️</span>
+                        <strong>Flight info</strong>
+                        <span>Ask about flights and airlines</span>
+                    </button>
+                </div>
+            </div>
+
+            <div id="messages" class="messages"></div>
+        </section>
+
+        <div id="errorBox" class="error-box hidden" role="alert"></div>
+
+        <!-- Shown while a draft plan waits for your decision -->
+        <section id="reviewBox" class="review hidden" aria-label="Review the plan">
+            <div class="review-text">
+                <strong>Review the plan above.</strong>
+                <span>Approve it, or tell me what to change.</span>
+            </div>
+            <textarea id="reviewFeedback" rows="2" placeholder="e.g. Pick a cheaper hotel and add more beach time"></textarea>
+            <div class="review-actions">
+                <button class="btn btn-primary" onclick="submitReview('approve')">Approve plan</button>
+                <button class="btn btn-ghost" onclick="submitReview('changes')">Request changes</button>
+            </div>
+        </section>
+
+        <footer class="composer-wrap">
+            <div class="composer">
+                <textarea
+                    id="userInput"
+                    rows="1"
+                    aria-label="Describe your trip"
+                    placeholder="Where from, where to, how many days, budget…"
+                ></textarea>
+                <button id="sendBtn" class="send" onclick="sendMessage()" aria-label="Send">
+                    <span id="btnText" class="send-icon" aria-hidden="true">➤</span>
+                    <span id="btnLoader" class="loader hidden" aria-hidden="true"></span>
+                </button>
+            </div>
+            <p class="fine-print">
+                Enter to send, Shift+Enter for a new line. AI answers can contain mistakes, so check prices,
+                times and entry rules before you book.
+            </p>
+        </footer>
+
+    </main>
+</div>
+
+<!-- Markdown renderer and sanitiser (the page shows plain text if these cannot load) -->
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+<!-- PDF download -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script src="/static/script.js"></script>
+
+</body>
+</html>
