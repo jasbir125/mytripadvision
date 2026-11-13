@@ -152,6 +152,21 @@ variable "db_deletion_protection" {
   default     = false
 }
 
+variable "db_sslmode" {
+  description = "JDBC sslmode for the database connection. RDS needs \"require\"; a local emulator's PostgreSQL has no TLS, so use \"disable\" there."
+  type        = string
+  default     = "require"
+}
+
+variable "extra_environment" {
+  description = <<-EOT
+    Extra plain environment variables for the app container. Empty on AWS. For a local emulator such as Floci:
+    { BEDROCK_ENDPOINT = "http://host.docker.internal:4566", AWS_ACCESS_KEY_ID = "test", AWS_SECRET_ACCESS_KEY = "test" }
+  EOT
+  type        = map(string)
+  default     = {}
+}
+
 variable "db_skip_final_snapshot" {
   description = "Set to false to take a snapshot when the database is destroyed."
   type        = bool

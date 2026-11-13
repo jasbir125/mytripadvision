@@ -98,6 +98,7 @@ AWS configure it.
 
 Set `LLM_PROVIDER=bedrock` (and `AWS_REGION` if it is not `us-east-1`). The app calls the Bedrock Converse API with the AWS SDK for Java v2.
 
+- Local emulator: set `BEDROCK_ENDPOINT=http://localhost:4566` (LocalStack or Floci) with `AWS_ACCESS_KEY_ID=test` and `AWS_SECRET_ACCESS_KEY=test` to run the Bedrock path without AWS. Floci's always-free Bedrock returns a fixed stub sentence for every prompt, so it proves the wiring, not the plans.
 - Models: `LLM_MODEL` defaults to `us.amazon.nova-lite-v1:0` and `LLM_FINAL_MODEL` to `us.amazon.nova-pro-v1:0`, so the final answer uses the stronger model. Any Bedrock model id or cross-region inference profile id works (the `us.` prefix is an inference profile).
 - IAM: the task role (or your local identity) needs `bedrock:InvokeModel` on the model, and also on the inference profile when the id starts with `us.`. For a cross-region profile the permission is also needed on the foundation model in each region the profile can route to.
 - Model access: Amazon Nova models work out of the box. Anthropic models need the one-time use-case form in the Bedrock console first.

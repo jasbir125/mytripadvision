@@ -1,0 +1,31 @@
+# Settings for a LOCAL run on Floci (https://floci.io) or LocalStack at http://localhost:4566.
+# Nothing here reaches AWS. Usage, from infra/terraform:
+#   cp floci.tfvars.example floci.tfvars
+#   tflocal init && tflocal apply -var-file=floci.tfvars
+#   docker build -t 000000000000.dkr.ecr.us-east-1.localhost:4566/mytripadvision:floci ../..
+# Start Floci with FLOCI_SERVICES_RDS_DEFAULT_POSTGRES_IMAGE=pgvector/pgvector:pg17 and its Bedrock proxy backend
+# (see infra/README.md, "Try the whole stack locally on Floci"); otherwise the task has no pgvector and Bedrock
+# answers every prompt with a stub sentence.
+
+aws_region    = "us-east-1"
+allowed_cidrs = ["0.0.0.0/0"]   # local only
+image_tag     = "floci"
+
+bedrock_model_id       = "us.amazon.nova-lite-v1:0"
+bedrock_final_model_id = "us.amazon.nova-pro-v1:0"
+
+# Real keys make hotels, weather and flights work inside the task; placeholders keep the task starting.
+tavily_api_key        = "local-placeholder"
+openweather_api_key   = "local-placeholder"
+aviationstack_api_key = "local-placeholder"
+
+db_sslmode             = "disable"   # the emulator's PostgreSQL has no TLS
+db_skip_final_snapshot = true
+task_cpu               = 1024
+task_memory            = 2048
+
+extra_environment = {
+  BEDROCK_ENDPOINT      = "http://host.docker.internal:4566"   # the task talks to Floci's Bedrock, not AWS
+  AWS_ACCESS_KEY_ID     = "test"                               # any value satisfies the emulator
+  AWS_SECRET_ACCESS_KEY = "test"
+}

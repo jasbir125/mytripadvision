@@ -12,15 +12,19 @@ resource "aws_ecs_cluster" "main" {
 locals {
   image = "${aws_ecr_repository.app.repository_url}:${var.image_tag}"
 
-  # Plain settings. Nothing here is secret.
+  # Plain settings. Nothing here is secret. extra_environment (empty on AWS) is for a local emulator such as
+  # Floci and may also override a key below, for example DB_URL or AWS_REGION.
+  base_environment = {
+    PORT            = tostring(var.container_port)
+    LLM_PROVIDER    = "bedrock"
+    LLM_MODEL       = var.bedrock_model_id
+    LLM_FINAL_MODEL = var.bedrock_final_model_id
+    AWS_REGION      = var.aws_region
+    DB_URL          = "jdbc:postgresql://${aws_db_instance.main.address}:${aws_db_instance.main.port}/${var.db_name}?sslmode=${var.db_sslmode}"
+    DB_USERNAME     = var.db_username
+  }
   container_environment = [
-    { name = "PORT", value = tostring(var.container_port) },
-    { name = "LLM_PROVIDER", value = "bedrock" },
-    { name = "LLM_MODEL", value = var.bedrock_model_id },
-    { name = "LLM_FINAL_MODEL", value = var.bedrock_final_model_id },
-    { name = "AWS_REGION", value = var.aws_region },
-    { name = "DB_URL", value = "jdbc:postgresql://${aws_db_instance.main.address}:${aws_db_instance.main.port}/${var.db_name}?sslmode=require" },
-    { name = "DB_USERNAME", value = var.db_username },
+    for key, value in merge(local.base_environment, var.extra_environment) : { name = key, value = value }
   ]
 
   # Read from Secrets Manager when the task starts: "<secret arn>:<json key>::"

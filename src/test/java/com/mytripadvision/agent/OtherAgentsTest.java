@@ -52,6 +52,15 @@ class OtherAgentsTest {
     }
 
     @Test
+    void weather_cityFromAChattyModelAnswer_isOneShortLine() {
+        assertThat(WeatherAgent.cityFrom("Dubai")).isEqualTo("Dubai");
+        assertThat(WeatherAgent.cityFrom("  'Dubai'.\n")).isEqualTo("Dubai");
+        assertThat(WeatherAgent.cityFrom("Here's your 3-day Dubai trip plan from Dhaka, along with the destination for weather and more\nDay 1..."))
+                .hasSize(60).startsWith("Here's your 3-day Dubai trip");
+        assertThat(WeatherAgent.cityFrom(null)).isEmpty();
+    }
+
+    @Test
     void weather_failureOfTheApi_givesAOneLineNotice_insteadOfFailingThePlan() {
         WeatherClient weather = mock(WeatherClient.class);
         when(llm.complete(any(), any(), anyString())).thenReturn("Lisbon");

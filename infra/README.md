@@ -95,3 +95,41 @@ That is roughly 70-75 USD a month before Bedrock. Check current prices on the AW
   `deploy.sh`; check that the native embedding libraries support it first.
 - **Bedrock errors** show up in the app log as `llm: AccessDeniedException` (no permission or model not
   enabled), `ValidationException` (wrong model id) or `ThrottlingException` (too many requests).
+
+## Try the whole stack locally on Floci (no AWS account)
+
+[Floci](https://floci.io) is a local AWS emulator on `http://localhost:4566` (LocalStack-compatible, `tflocal` works).
+Its ECS runs tasks as real Docker containers, its RDS is a real PostgreSQL container behind a proxy, and the ALB
+listener really forwards, so the same Terraform brings the app up locally. Verified on 2026-11-12 (Floci 2.3.0):
+35 resources, ECS task healthy behind the ALB, Secrets Manager values resolved into the task, real answers through
+Floci's Bedrock proxy.
+
+1. Start Floci with the settings below. The defaults would give a database without pgvector (the task then fails at
+   `CREATE EXTENSION vector`) and a Bedrock that answers every prompt with the fixed text `Floci stub response for
+   model=...`. The proxy backend forwards Bedrock Converse calls to any OpenAI-compatible server; this example uses
+   Ollama with the small llama model (fast enough for the agents' 120 s call limit, modest answers). Map the two Nova
+   ids to the models you want; for OpenAI use `https://api.openai.com/v1`, your key in
+   `FLOCI_SERVICES_BEDROCK_RUNTIME_PROXY_API_KEY`, and `...=gpt-4o-mini,...=gpt-4o`.
+
+   ```bash
+   docker run -d --name floci --restart unless-stopped \
+     -p 4566:4566 -p 127.0.0.1:80:80 \
+     -v /var/run/docker.sock:/var/run/docker.sock -v floci-data:/app/data \
+     -e FLOCI_SERVICES_RDS_DEFAULT_POSTGRES_IMAGE=pgvector/pgvector:pg17 \
+     -e FLOCI_SERVICES_BEDROCK_RUNTIME_BACKEND=proxy \
+     -e FLOCI_SERVICES_BEDROCK_RUNTIME_PROXY_URL=http://host.docker.internal:11434/v1 \
+     -e FLOCI_SERVICES_BEDROCK_RUNTIME_PROXY_MODEL_MAPPING=us.amazon.nova-lite-v1:0=llama3.2:1b,us.amazon.nova-pro-v1:0=llama3.2:1b \
+     floci/floci:latest
+   ```
+
+   Port 80 is the ALB listener (it binds inside the Floci container), so the app is at `http://localhost/` once the
+   task is healthy. `floci-data` keeps the resources across restarts; a plain `floci start` loses them.
+2. Build the image under its ECR name (a local image with that exact name is used as is; the push is optional):
+   `docker build -t 000000000000.dkr.ecr.us-east-1.localhost:4566/mytripadvision:floci .`
+3. `cd infra/terraform && cp floci.tfvars.example floci.tfvars && tflocal init && tflocal apply -var-file=floci.tfvars`
+   (`AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test`). `floci.tfvars` sets `db_sslmode = "disable"` and, through
+   `extra_environment`, `BEDROCK_ENDPOINT=http://host.docker.internal:4566` so the task calls Floci's Bedrock.
+   Put your real Tavily, OpenWeather and AviationStack keys in it for hotels, weather and flights to work.
+4. Open `http://localhost/`. Logs: `docker logs <floci-aws-ecs-...-app>` or `aws --endpoint-url http://localhost:4566 logs tail /ecs/mytripadvision`.
+
+LocalStack's Bedrock (a paid feature) runs models through Ollama the same way; its free edition has no Bedrock.

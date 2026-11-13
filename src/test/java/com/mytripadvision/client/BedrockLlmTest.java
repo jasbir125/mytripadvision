@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.mytripadvision.config.AppProperties;
+import com.mytripadvision.config.BedrockConfig;
 import com.mytripadvision.config.LlmConfig;
 import com.mytripadvision.exception.ExternalServiceException;
 import com.mytripadvision.workflow.Usage;
@@ -39,7 +40,7 @@ class BedrockLlmTest {
 
     private static AppProperties.Llm config(String model, String finalModel, String region) {
         return new AppProperties.Llm("bedrock", model, finalModel, region, "", "", "http://x", "http://x",
-                Duration.ofSeconds(2), Duration.ofSeconds(2), TestModels.PROVIDERS, TestModels.PRICES);
+                Duration.ofSeconds(2), Duration.ofSeconds(2), TestModels.PROVIDERS, TestModels.PRICES, null);
     }
 
     private LlmClient llm(String model, String finalModel, String region) {
@@ -223,7 +224,7 @@ class BedrockLlmTest {
     @Test
     void bedrockDefaults_areNovaLite_forTheModel_andNovaPro_forTheFinalAnswer_inUsEast1() {
         var config = new AppProperties.Llm("Bedrock", null, "", " ", "", "", "http://x", "http://x",
-                Duration.ofSeconds(1), Duration.ofSeconds(1), TestModels.PROVIDERS, TestModels.PRICES);
+                Duration.ofSeconds(1), Duration.ofSeconds(1), TestModels.PROVIDERS, TestModels.PRICES, null);
 
         assertThat(config.isBedrock()).isTrue();
         assertThat(config.resolvedModel()).isEqualTo("us.amazon.nova-lite-v1:0");
@@ -234,7 +235,7 @@ class BedrockLlmTest {
     @Test
     void bedrockSettings_canBeOverridden() {
         var config = new AppProperties.Llm("bedrock", "a", "b", "eu-west-1", "", "", "http://x", "http://x",
-                Duration.ofSeconds(1), Duration.ofSeconds(1), TestModels.PROVIDERS, TestModels.PRICES);
+                Duration.ofSeconds(1), Duration.ofSeconds(1), TestModels.PROVIDERS, TestModels.PRICES, null);
 
         assertThat(config.resolvedModel()).isEqualTo("a");
         assertThat(config.resolvedFinalModel()).isEqualTo("b");
@@ -244,7 +245,7 @@ class BedrockLlmTest {
     @Test
     void aProviderWithoutModelsInTheSettings_isReportedClearly() {
         var config = new AppProperties.Llm("bedrock", "", "", null, "", "", "http://x", "http://x",
-                Duration.ofSeconds(1), Duration.ofSeconds(1), Map.of(), TestModels.PRICES);
+                Duration.ofSeconds(1), Duration.ofSeconds(1), Map.of(), TestModels.PRICES, null);
 
         assertThatThrownBy(config::resolvedModel).isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("No default model for provider 'bedrock'")
@@ -254,14 +255,30 @@ class BedrockLlmTest {
     @Test
     void otherProviders_keepTheirDefaults_groqUsesOneModel_openaiUsesGpt4oForTheFinalAnswer() {
         var groq = new AppProperties.Llm("groq", null, null, null, "", "k", "http://x", "http://x",
-                Duration.ofSeconds(1), Duration.ofSeconds(1), TestModels.PROVIDERS, TestModels.PRICES);
+                Duration.ofSeconds(1), Duration.ofSeconds(1), TestModels.PROVIDERS, TestModels.PRICES, null);
         var openai = new AppProperties.Llm("openai", null, null, null, "k", "", "http://x", "http://x",
-                Duration.ofSeconds(1), Duration.ofSeconds(1), TestModels.PROVIDERS, TestModels.PRICES);
+                Duration.ofSeconds(1), Duration.ofSeconds(1), TestModels.PROVIDERS, TestModels.PRICES, null);
 
         assertThat(groq.resolvedModel()).isEqualTo("openai/gpt-oss-120b");
         assertThat(groq.resolvedFinalModel()).isEqualTo("openai/gpt-oss-120b");
         assertThat(openai.resolvedModel()).isEqualTo("gpt-4o-mini");
         assertThat(openai.resolvedFinalModel()).isEqualTo("gpt-4o");
+    }
+
+    @Test
+    void anEmulatorEndpoint_isUsedInsteadOfAws_whenSet() {
+        var local = new AppProperties.Llm("bedrock", "", "", "us-east-1", "", "", "http://x", "http://x",
+                Duration.ofSeconds(1), Duration.ofSeconds(1), TestModels.PROVIDERS, TestModels.PRICES, "http://localhost:4566");
+        var real = config(null, null, null);
+
+        assertThat(local.hasBedrockEndpoint()).isTrue();
+        assertThat(real.hasBedrockEndpoint()).isFalse();
+        try (var client = new BedrockConfig().bedrockRuntimeClient(new AppProperties(local, null, null, null, null, null))) {
+            assertThat(client.serviceClientConfiguration().endpointOverride()).contains(java.net.URI.create("http://localhost:4566"));
+        }
+        try (var client = new BedrockConfig().bedrockRuntimeClient(new AppProperties(real, null, null, null, null, null))) {
+            assertThat(client.serviceClientConfiguration().endpointOverride()).isEmpty();
+        }
     }
 
     @Test

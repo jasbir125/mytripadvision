@@ -17,7 +17,7 @@ Read first: `docs/how-it-works.md` (plain-English design), `docs/architecture.md
 - Run: IntelliJ `MyTripAdvisionApplication` (debug works), or `./mvnw spring-boot:run`. First start downloads a ~130 MB embedding model.
 - Tests: `./mvnw -B verify` (needs Docker: Testcontainers with `pgvector/pgvector:pg17`). About 130 unit and 30 integration tests, all must pass; coverage gate 70%.
 - All settings live in `src/main/resources/application.yml`. API keys go in `config/local-secrets.yml` (git-ignored, excluded from the Docker image); template: `config/local-secrets.example.yml`.
-- AI provider: `mytripadvision.llm.provider` = `openai`, `groq` or `bedrock`. **All model ids and prices live in `application.yml`** (`mytripadvision.llm.providers` and `.prices`), none in Java. Leave `model` and `final-model` empty to get the provider's models from there. The final answer uses a stronger model (`LLM_FINAL_MODEL`).
+- AI provider: `mytripadvision.llm.provider` = `openai`, `groq` or `bedrock` (`BEDROCK_ENDPOINT=http://localhost:4566` points Bedrock at a local emulator such as Floci, whose Bedrock answers every prompt with a stub sentence). **All model ids and prices live in `application.yml`** (`mytripadvision.llm.providers` and `.prices`), none in Java. Leave `model` and `final-model` empty to get the provider's models from there. The final answer uses a stronger model (`LLM_FINAL_MODEL`).
 
 ## How a request flows (agents are in `agent/`, the chain is `workflow/TravelWorkflow`)
 

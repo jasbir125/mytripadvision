@@ -1,12 +1,14 @@
 package com.mytripadvision.config;
 
 import com.mytripadvision.exception.ExternalServiceException;
+import java.io.IOException;
 import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.function.Supplier;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 import software.amazon.awssdk.awscore.exception.AwsServiceException;
@@ -59,7 +61,12 @@ public final class HttpClients {
             return aws.statusCode() == 429 || aws.statusCode() >= 500 || "ThrottlingException".equals(awsCode(aws));
         }
         // the AWS SDK reports timeouts and connection problems as SdkClientException
-        return ex instanceof ResourceAccessException || ex instanceof SdkClientException;
+        if (ex instanceof ResourceAccessException || ex instanceof SdkClientException) {
+            return true;
+        }
+        // a reused keep-alive connection the server has dropped fails only while the body is read: the
+        // second attempt opens a fresh connection
+        return ex instanceof RestClientException && ex.getCause() instanceof IOException;
     }
 
     private static ExternalServiceException failed(String service, RuntimeException ex) {
@@ -81,7 +88,16 @@ public final class HttpClients {
         if (ex instanceof ResourceAccessException || ex instanceof SdkClientException) {
             return "timeout or connection error";
         }
-        return ex.getClass().getSimpleName();
+        return causeChain(ex);
+    }
+
+    /** Class names only, never messages (they can hold URLs with keys): "RestClientException < IOException". */
+    private static String causeChain(Throwable ex) {
+        StringBuilder chain = new StringBuilder(ex.getClass().getSimpleName());
+        for (Throwable cause = ex.getCause(); cause != null && cause != ex; cause = cause.getCause()) {
+            chain.append(" < ").append(cause.getClass().getSimpleName());
+        }
+        return chain.toString();
     }
 
     /** The AWS error code if it looks like a plain name, else null. */

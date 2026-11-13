@@ -13,6 +13,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
+import com.github.tomakehurst.wiremock.http.Fault;
 import com.github.tomakehurst.wiremock.stubbing.Scenario;
 import com.mytripadvision.client.ChatApiLlmClient;
 import com.mytripadvision.client.FlightClient;
@@ -60,7 +61,7 @@ class ExternalClientsTest {
     private AppProperties props(String key, Duration read) {
         return new AppProperties(
                 new AppProperties.Llm("openai", "gpt-4o-mini", "gpt-4o", null, key, "", "http://localhost:" + wire.port() + "/llm",
-                        "http://unused", Duration.ofSeconds(2), read, TestModels.PROVIDERS, TestModels.PRICES),
+                        "http://unused", Duration.ofSeconds(2), read, TestModels.PROVIDERS, TestModels.PRICES, null),
                 http("/aviation", key, read), http("/tavily", key, read), http("/weather", key, read), null, null);
     }
 
@@ -141,6 +142,20 @@ class ExternalClientsTest {
                 .isInstanceOf(ExternalServiceException.class)
                 .hasMessage("aviationstack: timeout or connection error")
                 .hasNoCause();
+        wire.verify(2, getRequestedFor(urlPathEqualTo("/aviation/flights")));
+    }
+
+    @Test
+    void aBodyThatBreaksOffMidway_isRetriedOnce_thenSucceeds() {
+        // headers arrive but the body does not (a dropped keep-alive connection): the retry uses a new connection
+        wire.stubFor(get(urlPathEqualTo("/aviation/flights")).inScenario("broken-body")
+                .whenScenarioStateIs(Scenario.STARTED)
+                .willReturn(aResponse().withFault(Fault.MALFORMED_RESPONSE_CHUNK)).willSetStateTo("second"));
+        wire.stubFor(get(urlPathEqualTo("/aviation/flights")).inScenario("broken-body")
+                .whenScenarioStateIs("second").willReturn(aResponse().withHeader("Content-Type", "application/json")
+                        .withBody("{\"data\": []}")));
+
+        assertThat(flights("k", Duration.ofSeconds(2)).flightsForAirline("Emirates", 30)).isEqualTo("[]");
         wire.verify(2, getRequestedFor(urlPathEqualTo("/aviation/flights")));
     }
 
@@ -252,11 +267,11 @@ class ExternalClientsTest {
     @Test
     void theFinalModel_defaultsPerProvider_whenItIsNotSet() {
         var notSet = new AppProperties.Llm("openai", "gpt-4o-mini", "", null, "k", "", "http://x", "http://x",
-                Duration.ofSeconds(1), Duration.ofSeconds(1), TestModels.PROVIDERS, TestModels.PRICES);
+                Duration.ofSeconds(1), Duration.ofSeconds(1), TestModels.PROVIDERS, TestModels.PRICES, null);
 
         assertThat(notSet.resolvedFinalModel()).isEqualTo("gpt-4o");   // openai: a stronger model for the final answer
         assertThat(new AppProperties.Llm("groq", null, null, null, "", "k", "http://x", "http://x",
-                Duration.ofSeconds(1), Duration.ofSeconds(1), TestModels.PROVIDERS, TestModels.PRICES).resolvedFinalModel()).isEqualTo("openai/gpt-oss-120b");
+                Duration.ofSeconds(1), Duration.ofSeconds(1), TestModels.PROVIDERS, TestModels.PRICES, null).resolvedFinalModel()).isEqualTo("openai/gpt-oss-120b");
     }
 
     @Test
@@ -269,7 +284,7 @@ class ExternalClientsTest {
     @Test
     void llm_unknownProvider_isRejectedAtStartup() {
         var wrong = new AppProperties.Llm("azure", null, null, null, "k", "", "http://x", "http://x", Duration.ofSeconds(1),
-                Duration.ofSeconds(1), TestModels.PROVIDERS, TestModels.PRICES);
+                Duration.ofSeconds(1), TestModels.PROVIDERS, TestModels.PRICES, null);
         var props = new AppProperties(wrong, null, null, null, null, null);
 
         assertThatThrownBy(() -> new LlmConfig().llmClient(props, null))

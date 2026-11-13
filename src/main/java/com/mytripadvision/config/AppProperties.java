@@ -25,7 +25,8 @@ public record AppProperties(
                       String openaiApiKey, String groqApiKey,
                       @NotBlank String openaiBaseUrl, @NotBlank String groqBaseUrl,
                       Duration connectTimeout, Duration readTimeout,
-                      @NotEmpty Map<String, Models> providers, List<Price> prices) {
+                      @NotEmpty Map<String, Models> providers, List<Price> prices,
+                      String bedrockEndpoint) {
 
         /** A provider's default models: {@code model} runs the agents, {@code finalModel} writes the final answer. */
         public record Models(String model, String finalModel) {
@@ -54,6 +55,11 @@ public record AppProperties(
 
         public boolean isBedrock() {
             return "bedrock".equals(resolvedProvider());
+        }
+
+        /** BEDROCK_ENDPOINT: set only for a local emulator such as LocalStack or Floci; empty means real AWS. */
+        public boolean hasBedrockEndpoint() {
+            return hasText(bedrockEndpoint);
         }
 
         /** AWS_REGION, or us-east-1. Only used by bedrock. */

@@ -26,6 +26,15 @@ public class WeatherAgent {
                 Return only the city name.
                 """;
 
+    /** The model must answer with one city name; a chatty answer is cut to its first line, quotes and full stop removed. */
+    static String cityFrom(String reply) {
+        String first = reply == null ? "" : reply.strip().lines().findFirst().orElse("").strip();
+        first = first.replaceAll("^[\"'`]+|[\"'`.]+$", "").strip();
+        return first.length() > MAX_CITY_CHARS ? first.substring(0, MAX_CITY_CHARS).strip() : first;
+    }
+
+    private static final int MAX_CITY_CHARS = 60;
+
     /** What the later agents read instead of weather data when the service could not be reached. */
     static final String NO_DATA_TEXT = "Weather data unavailable.";
 
@@ -35,7 +44,7 @@ public class WeatherAgent {
     public String run(WorkflowState state) {
         log.info("[weather] started");
         // weather is looked up by city, so first ask the LLM which city the request means
-        String city = Agents.ask(llm, state, null, PROMPT.replace("{query}", state.getUserQuery())).strip();
+        String city = cityFrom(Agents.ask(llm, state, null, PROMPT.replace("{query}", state.getUserQuery())));
         log.info("[weather] destination city: '{}'", city);
 
         try {

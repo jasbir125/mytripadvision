@@ -71,6 +71,9 @@ mytripadvision:
       - { model: "amazon.nova-lite-v1:0", input: 0.06, output: 0.24 }
       - { model: "amazon.nova-pro-v1:0", input: 0.80, output: 3.20 }
     region: ${AWS_REGION:us-east-1}          # only for provider=bedrock
+    # Only for a local Bedrock emulator (LocalStack, Floci): e.g. http://localhost:4566. Empty = real AWS.
+    # The emulator still wants credentials: set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY to any value (test).
+    bedrock-endpoint: ${BEDROCK_ENDPOINT:}
     openai-api-key: ${OPENAI_API_KEY:}       # real keys: config/local-secrets.yml
     groq-api-key: ${GROQ_API_KEY:}
     openai-base-url: https://api.openai.com/v1
