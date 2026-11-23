@@ -1,0 +1,6 @@
+# CloudWatch Logs: the app's log group (one stream per task).
+
+resource "aws_cloudwatch_log_group" "app" {
+  name              = "/ecs/${local.name}"
+  retention_in_days = var.log_retention_days
+}

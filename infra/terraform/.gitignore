@@ -2,6 +2,7 @@
 *.tfstate
 *.tfstate.*
 *.tfvars
-!terraform.tfvars.example
+!*.tfvars.example
+localstack_providers_override.tf
 crash.log
 tfplan

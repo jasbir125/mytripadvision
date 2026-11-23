@@ -1,51 +1,57 @@
 # ---------------------------------------------------------------
-# General
+# Naming
 # ---------------------------------------------------------------
 
-variable "aws_region" {
-  description = "AWS region for everything, including Bedrock."
-  type        = string
-  default     = "us-east-1"
-}
-
-variable "name" {
-  description = "Prefix for resource names."
+variable "project" {
+  description = "Project name, the first part of every resource name."
   type        = string
   default     = "mytripadvision"
 }
 
-variable "allowed_cidrs" {
-  description = <<-EOT
-    Who may open the web page (CIDR blocks), for example ["203.0.113.10/32"] for just your IP.
-    There is NO default on purpose: the app has no login, and every trip request costs Bedrock and API money.
-    Use ["0.0.0.0/0"] only when you accept that anyone on the internet can use it.
-  EOT
-  type        = list(string)
+variable "environment" {
+  description = "Environment name, the second part of every resource name: prod, staging, floci..."
+  type        = string
+  default     = "prod"
 
   validation {
-    condition     = length(var.allowed_cidrs) > 0
-    error_message = "Give at least one CIDR block in allowed_cidrs."
+    condition     = can(regex("^[a-z][a-z0-9-]{0,15}$", var.environment))
+    error_message = "environment must be lowercase letters, digits or dashes, at most 16 characters."
   }
 }
 
+variable "aws_region" {
+  description = "AWS region for everything, including Bedrock."
+  type        = string
+  default     = "ap-southeast-2"
+}
+
+# ---------------------------------------------------------------
+# Network (existing VPC — nothing is created)
+# ---------------------------------------------------------------
+
+variable "vpc_id" {
+  description = "ID of the existing VPC to deploy into."
+  type        = string
+}
+
+# ---------------------------------------------------------------
+# Access
+# ---------------------------------------------------------------
+
+variable "allowed_cidrs" {
+  description = "CIDR blocks that may reach the app directly on container_port. Use your own IP to restrict access."
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
+}
+
 variable "certificate_arn" {
-  description = "Optional ACM certificate ARN. When set, the load balancer serves HTTPS and redirects HTTP to it."
+  description = "Unused without an ALB. Kept so floci.tfvars stays compatible."
   type        = string
   default     = ""
 }
 
 # ---------------------------------------------------------------
-# Network
-# ---------------------------------------------------------------
-
-variable "vpc_cidr" {
-  description = "CIDR block of the VPC. Two public and two private subnets are carved out of it."
-  type        = string
-  default     = "10.20.0.0/16"
-}
-
-# ---------------------------------------------------------------
-# Container
+# Container (ECS Fargate)
 # ---------------------------------------------------------------
 
 variable "image_tag" {
@@ -61,7 +67,7 @@ variable "container_port" {
 }
 
 variable "cpu_architecture" {
-  description = "X86_64 or ARM64. The Docker image must be built for the same platform (deploy.sh builds linux/amd64)."
+  description = "X86_64 or ARM64. The Docker image must be built for the same platform."
   type        = string
   default     = "X86_64"
 
@@ -78,7 +84,7 @@ variable "task_cpu" {
 }
 
 variable "task_memory" {
-  description = "Fargate memory in MiB. The embedding model needs room, so do not go below 2048."
+  description = "Fargate memory in MiB."
   type        = number
   default     = 2048
 }
@@ -95,43 +101,54 @@ variable "log_retention_days" {
   default     = 30
 }
 
+variable "extra_environment" {
+  description = "Extra plain environment variables merged into the container definition."
+  type        = map(string)
+  default     = {}
+}
+
 # ---------------------------------------------------------------
 # Bedrock
 # ---------------------------------------------------------------
 
 variable "bedrock_model_id" {
-  description = <<-EOT
-    Bedrock model (or cross-region inference profile) for the agents, for example us.amazon.nova-lite-v1:0.
-    Check what your account can use:  aws bedrock list-inference-profiles --region <region>
-    Anthropic models need the one-time use-case form in the Bedrock console; Amazon Nova works out of the box.
-  EOT
+  description = "Bedrock model (or cross-region inference profile) for the agents."
   type        = string
-  default     = "us.amazon.nova-lite-v1:0"
+  default     = "apac.amazon.nova-lite-v1:0"
 }
 
 variable "bedrock_final_model_id" {
   description = "Stronger Bedrock model used only for the final answer."
   type        = string
-  default     = "us.amazon.nova-pro-v1:0"
+  default     = "apac.amazon.nova-pro-v1:0"
+}
+
+variable "bedrock_endpoint" {
+  description = "Empty on AWS. For a local emulator the URL the app sends Bedrock calls to."
+  type        = string
+  default     = ""
 }
 
 # ---------------------------------------------------------------
-# Database
+# Database (RDS PostgreSQL)
 # ---------------------------------------------------------------
 
 variable "db_name" {
-  type    = string
-  default = "mytripadvision"
+  description = "Database name."
+  type        = string
+  default     = "mytripadvision"
 }
 
 variable "db_username" {
-  type    = string
-  default = "mytripadvision"
+  description = "Database user."
+  type        = string
+  default     = "mytripadvision"
 }
 
 variable "db_instance_class" {
-  type    = string
-  default = "db.t4g.micro"
+  description = "RDS instance class. db.t3.micro is free tier eligible."
+  type        = string
+  default     = "db.t3.micro"
 }
 
 variable "db_allocated_storage" {
@@ -141,30 +158,15 @@ variable "db_allocated_storage" {
 }
 
 variable "db_multi_az" {
-  description = "A standby copy in a second zone. Doubles the database cost."
+  description = "A standby copy in a second AZ."
   type        = bool
   default     = false
 }
 
 variable "db_deletion_protection" {
-  description = "Set to true for anything you care about. It blocks terraform destroy until you turn it off."
+  description = "Block terraform destroy until turned off."
   type        = bool
   default     = false
-}
-
-variable "db_sslmode" {
-  description = "JDBC sslmode for the database connection. RDS needs \"require\"; a local emulator's PostgreSQL has no TLS, so use \"disable\" there."
-  type        = string
-  default     = "require"
-}
-
-variable "extra_environment" {
-  description = <<-EOT
-    Extra plain environment variables for the app container. Empty on AWS. For a local emulator such as Floci:
-    { BEDROCK_ENDPOINT = "http://host.docker.internal:4566", AWS_ACCESS_KEY_ID = "test", AWS_SECRET_ACCESS_KEY = "test" }
-  EOT
-  type        = map(string)
-  default     = {}
 }
 
 variable "db_skip_final_snapshot" {
@@ -173,27 +175,29 @@ variable "db_skip_final_snapshot" {
   default     = true
 }
 
-# ---------------------------------------------------------------
-# API keys (stored in Secrets Manager, never in the task definition)
-# ---------------------------------------------------------------
+variable "db_sslmode" {
+  description = "JDBC sslmode: require for RDS, disable for local emulators."
+  type        = string
+  default     = "require"
 
-variable "tavily_api_key" {
-  type      = string
-  sensitive = true
+  validation {
+    condition     = contains(["disable", "prefer", "require", "verify-ca", "verify-full"], var.db_sslmode)
+    error_message = "db_sslmode must be disable, prefer, require, verify-ca or verify-full."
+  }
 }
 
-variable "openweather_api_key" {
-  type      = string
-  sensitive = true
-}
+# ---------------------------------------------------------------
+# API key rotation window
+# ---------------------------------------------------------------
 
-variable "aviationstack_api_key" {
-  type      = string
-  sensitive = true
+variable "default_origin_iata" {
+  description = "Departure airport IATA code used when the user names no origin."
+  type        = string
+  default     = ""
 }
 
 variable "secret_recovery_window_days" {
-  description = "Days a deleted secret stays recoverable (0 = delete at once, handy while testing)."
+  description = "Days a deleted secret stays recoverable (0 = delete immediately)."
   type        = number
   default     = 7
 }

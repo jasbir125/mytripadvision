@@ -6,8 +6,20 @@
 const APP_NAME = "MyTripAdvision Agent";
 
 // Anonymous id for this browser. It keeps your trips separate from other people's.
+// Falls back to a manual UUID when crypto.randomUUID is unavailable (HTTP, older browsers).
+function generateUUID() {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+        return crypto.randomUUID();
+    }
+    // RFC 4122 version-4 UUID built from random bytes
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
+        const r = Math.random() * 16 | 0;
+        return (c === "x" ? r : (r & 0x3 | 0x8)).toString(16);
+    });
+}
+
 const userId = localStorage.getItem("travel_user_id") || (() => {
-    const id = crypto.randomUUID();
+    const id = generateUUID();
     localStorage.setItem("travel_user_id", id);
     return id;
 })();
