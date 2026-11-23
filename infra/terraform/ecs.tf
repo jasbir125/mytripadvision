@@ -10,17 +10,23 @@ resource "aws_ecs_cluster" "this" {
 }
 
 locals {
-  # Plain settings. Nothing here is secret. extra_environment is merged over them (a key given there wins).
+  # Determine effective provider — extra_environment wins over the base bedrock default
+  effective_provider = lookup(var.extra_environment, "LLM_PROVIDER", "bedrock")
+
+  # Plain settings. extra_environment is merged over them (a key given there wins).
   base_environment = merge(
     {
-      PORT            = tostring(var.container_port)
-      LLM_PROVIDER    = "bedrock"
+      PORT        = tostring(var.container_port)
+      LLM_PROVIDER = "bedrock"
+      AWS_REGION  = var.aws_region
+      DB_URL      = "jdbc:postgresql://${aws_db_instance.this.address}:${aws_db_instance.this.port}/${var.db_name}?sslmode=${var.db_sslmode}"
+      DB_USERNAME = var.db_username
+    },
+    # Only set Bedrock model IDs when actually using Bedrock — other providers use their own defaults from application.yml
+    local.effective_provider == "bedrock" ? {
       LLM_MODEL       = var.bedrock_model_id
       LLM_FINAL_MODEL = var.bedrock_final_model_id
-      AWS_REGION      = var.aws_region
-      DB_URL          = "jdbc:postgresql://${aws_db_instance.this.address}:${aws_db_instance.this.port}/${var.db_name}?sslmode=${var.db_sslmode}"
-      DB_USERNAME     = var.db_username
-    },
+    } : {},
     var.bedrock_endpoint == "" ? {} : { BEDROCK_ENDPOINT = var.bedrock_endpoint },
     var.default_origin_iata == "" ? {} : { DEFAULT_ORIGIN_IATA = var.default_origin_iata },
   )

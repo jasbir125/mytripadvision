@@ -50,12 +50,12 @@ resource "aws_iam_role_policy" "ecs_execution_secrets" {
 
 locals {
   bedrock_resources = concat(
-    # the model itself; the region is a wildcard because an inference profile may route to other regions
+    # the base model ARN — region wildcard so the cross-region routing works
     [for id in local.bedrock_base_model_ids :
     "arn:${data.aws_partition.current.partition}:bedrock:*::foundation-model/${id}"],
-    # the inference profile (only exists for ids with a region prefix; harmless otherwise)
+    # the inference profile ARN — must match the region the app actually calls Bedrock in
     [for id in local.bedrock_model_ids :
-    "arn:${data.aws_partition.current.partition}:bedrock:${var.aws_region}:${data.aws_caller_identity.current.account_id}:inference-profile/${id}"],
+    "arn:${data.aws_partition.current.partition}:bedrock:${local.bedrock_region}:${data.aws_caller_identity.current.account_id}:inference-profile/${id}"],
   )
 }
 

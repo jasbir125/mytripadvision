@@ -20,5 +20,10 @@ locals {
     for id in local.bedrock_model_ids : replace(id, "/^(us|eu|apac|us-gov)\\./", "")
   ]
 
+  # Bedrock region may differ from the deployment region (e.g. infra in ap-southeast-2,
+  # Bedrock in us-east-1 to work around an org SCP). Read from extra_environment if set,
+  # otherwise use the deployment region.
+  bedrock_region = lookup(var.extra_environment, "AWS_REGION", var.aws_region)
+
   use_https = var.certificate_arn != ""
 }
