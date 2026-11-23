@@ -1,0 +1,74 @@
+# LOCAL run on Floci (https://floci.io) or LocalStack at http://localhost:4566. Nothing here reaches AWS.
+#
+# SETUP:
+#   cp floci.tfvars.example floci.tfvars   # git-ignored; fill in your API keys below
+#
+# Then from infra/terraform:
+#   tflocal init && tflocal apply -var-file=floci.tfvars
+#   docker build -t 000000000000.dkr.ecr.us-east-1.localhost:4566/mytripadvision-floci:floci ../..
+#
+# Start Floci with pgvector + Bedrock proxy (see infra/README.md for the full docker run command).
+# Every input is listed; the ones that are commented out keep their default.
+
+# ---- Naming: resources are called <project>-<environment>-<role>, e.g. mytripadvision-floci-alb
+project     = "mytripadvision"
+environment = "floci"
+aws_region  = "us-east-1"
+
+# ---- Access: local only, so everyone
+allowed_cidrs   = ["0.0.0.0/0"]
+certificate_arn = ""
+
+# ---- Network
+vpc_cidr = "10.20.0.0/16"
+
+# ---- Container. The image tag must match the docker build above; Floci uses the local image as is.
+image_tag          = "floci"
+container_port     = 8000
+cpu_architecture   = "ARM64" # ignored by Floci, which runs the image for the host's architecture
+task_cpu           = 1024
+task_memory        = 2048
+desired_count      = 1
+log_retention_days = 30
+extra_environment = {
+  AWS_ACCESS_KEY_ID     = "test" # any value satisfies the emulator
+  AWS_SECRET_ACCESS_KEY = "test"
+}
+
+# ---- Bedrock: the task talks to Floci's Bedrock (host.docker.internal = the Mac/PC from inside the task)
+bedrock_model_id       = "us.amazon.nova-lite-v1:0"
+bedrock_final_model_id = "us.amazon.nova-pro-v1:0"
+bedrock_endpoint       = "http://host.docker.internal:4566"
+
+# ---- Database: Floci runs a real PostgreSQL container behind a proxy; it has no TLS
+db_name                = "mytripadvision"
+db_username            = "mytripadvision"
+db_instance_class      = "db.t4g.micro"
+db_allocated_storage   = 20
+db_multi_az            = false
+db_deletion_protection = false
+db_skip_final_snapshot = true
+db_sslmode             = "disable"
+
+# ---- API keys: real keys make hotels, weather and flights work inside the task; placeholders keep it starting.
+# Replace every REPLACE_ME value with your own key. The app starts with placeholders but API calls will fail.
+#
+# OpenAI (https://platform.openai.com/api-keys) — used when LLM_PROVIDER=openai
+openai_api_key = "sk-REPLACE_ME"
+
+# Groq (https://console.groq.com/keys) — used when LLM_PROVIDER=groq
+groq_api_key = "gsk_REPLACE_ME"
+
+# Tavily (https://app.tavily.com) — hotel web search
+tavily_api_key = "tvly-REPLACE_ME"
+
+# OpenWeather (https://home.openweathermap.org/api_keys) — weather and forecast
+openweather_api_key = "REPLACE_ME"
+
+# AviationStack (https://aviationstack.com/dashboard) — live flight data
+aviationstack_api_key = "REPLACE_ME"
+
+# Default departure airport IATA code when the user names no origin (e.g. "DEL", "JFK"). Leave empty for none.
+default_origin_iata = ""
+
+secret_recovery_window_days = 0

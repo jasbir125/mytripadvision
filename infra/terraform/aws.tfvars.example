@@ -1,0 +1,75 @@
+# Real AWS deployment — no ALB (saves ~$16/month).
+# The app is reachable on the Fargate task's public IP, port 8000.
+#
+# SETUP:
+#   cp aws.tfvars.example aws.tfvars   # git-ignored; fill in your values below
+#   cd infra && ./deploy.sh            # builds image, pushes to ECR, applies Terraform
+#
+# After deploy, get the task public IP:
+#   bash infra/get-app-url.sh
+#   # Open: http://<ip>:8000
+
+# ---- Naming
+project     = "mytripadvision"
+environment = "prod"
+aws_region  = "ap-southeast-2"   # change to your preferred region
+
+# ---- Existing network: use your VPC id (create a new VPC or use the default one)
+#   aws ec2 describe-vpcs --region ap-southeast-2 --query 'Vpcs[?IsDefault].VpcId' --output text
+vpc_id = "vpc-REPLACE_ME"
+
+# ---- Access: who may reach port 8000 directly.
+#   curl -s https://checkip.amazonaws.com   →  use your IP, e.g. "203.0.113.10/32"
+#   Use ["0.0.0.0/0"] to allow everyone (not recommended for production).
+allowed_cidrs   = ["0.0.0.0/0"]
+certificate_arn = ""
+
+# ---- Container (ECS Fargate). deploy.sh sets image_tag to a timestamp automatically.
+container_port     = 8000
+cpu_architecture   = "X86_64"
+task_cpu           = 1024
+task_memory        = 2048
+desired_count      = 1
+log_retention_days = 30
+
+# ---- LLM provider: "openai", "groq" or "bedrock"
+# For openai/groq: add API key to Secrets Manager (see README), leave extra_environment as below.
+# For bedrock: set LLM_PROVIDER = "bedrock" and ensure Bedrock model access is enabled in your region.
+extra_environment = {
+  LLM_PROVIDER = "openai"
+}
+
+# ---- Bedrock (only used when LLM_PROVIDER = "bedrock")
+bedrock_model_id       = "us.amazon.nova-lite-v1:0"
+bedrock_final_model_id = "us.amazon.nova-pro-v1:0"
+bedrock_endpoint       = ""   # empty = real AWS Bedrock
+
+# ---- Database (RDS PostgreSQL — db.t3.micro is free tier eligible)
+db_name                = "mytripadvision"
+db_username            = "mytripadvision"
+db_instance_class      = "db.t3.micro"
+db_allocated_storage   = 20
+db_multi_az            = false
+db_deletion_protection = false
+db_skip_final_snapshot = true
+db_sslmode             = "require"
+
+# ---- API keys: stored in AWS Secrets Manager, NOT here — they never appear in Terraform state.
+# Create the secret once before running deploy.sh:
+#   aws secretsmanager create-secret \
+#     --name "mytripadvision-prod/app" \
+#     --region ap-southeast-2 \
+#     --secret-string '{
+#       "OPENAI_API_KEY":        "sk-...",
+#       "GROQ_API_KEY":          "gsk_...",
+#       "TAVILY_API_KEY":        "tvly-...",
+#       "OPENWEATHER_API_KEY":   "...",
+#       "AVIATIONSTACK_API_KEY": "..."
+#     }'
+# To update keys later (no redeploy needed):
+#   aws secretsmanager put-secret-value \
+#     --secret-id mytripadvision-prod/app \
+#     --secret-string '{...}' \
+#     --region ap-southeast-2
+default_origin_iata         = ""
+secret_recovery_window_days = 7
